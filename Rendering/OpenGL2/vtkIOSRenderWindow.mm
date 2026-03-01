@@ -16,7 +16,28 @@
 
 #import <sstream>
 
+#import <UIKit/UIKit.h>
+#import <QuartzCore/CAEAGLLayer.h>
+#import <OpenGLES/EAGL.h>
+#import <OpenGLES/ES3/gl.h>
+#import <OpenGLES/ES3/glext.h>
+#import <CoreFoundation/CoreFoundation.h>
+#import <dlfcn.h>
+
 #include "vtk_glad.h"
+
+
+// Minimal UIView subclass that provides a CAEAGLLayer
+@interface vtkIOSGLView : UIView
+@end
+
+@implementation vtkIOSGLView
++ (Class)layerClass
+{
+  return [CAEAGLLayer class];
+}
+@end
+
 
 VTK_ABI_NAMESPACE_BEGIN
 vtkStandardNewMacro(vtkIOSRenderWindow);
@@ -31,7 +52,15 @@ vtkIOSRenderWindow::vtkIOSRenderWindow()
   this->ForceMakeCurrent = 0;
   this->OnScreenInitialized = 0;
   this->OffScreenInitialized = 0;
-  this->SetFrameBlitModeToBlitToCurrent();
+  this->SetFrameBlitModeToBlitToHardware();
+
+  // Provide a symbol loader so glad can resolve OpenGL ES functions on iOS.
+  this->SetOpenGLSymbolLoader(
+    [](void*, const char* name) -> VTKOpenGLAPIProc
+    {
+      return reinterpret_cast<VTKOpenGLAPIProc>(dlsym(RTLD_DEFAULT, name));
+    },
+    nullptr);
 }
 
 //----------------------------------------------------------------------------
@@ -53,10 +82,23 @@ void vtkIOSRenderWindow::BlitDisplayFramebuffersToHardware()
   this->GetState()->vtkglViewport(0, 0, this->Size[0], this->Size[1]);
   this->GetState()->vtkglScissor(0, 0, this->Size[0], this->Size[1]);
 
-  this->GetState()->vtkglBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+  if (this->FramebufferId != 0)
+  {
+    this->GetState()->vtkglBindFramebuffer(GL_DRAW_FRAMEBUFFER, this->FramebufferId);
+  }
+  else
+  {
+    this->GetState()->vtkglBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+  }
 
   this->DisplayFramebuffer->ActivateReadBuffer(0);
-  this->GetState()->vtkglDrawBuffer(this->DoubleBuffer ? GL_BACK : GL_FRONT);
+  unsigned int drawBuffer = this->DoubleBuffer ? GL_BACK : GL_FRONT;
+  if (this->FramebufferId != 0)
+  {
+    // When drawing to an FBO, use COLOR_ATTACHMENT0 instead of hardware buffers.
+    drawBuffer = GL_COLOR_ATTACHMENT0;
+  }
+  this->GetState()->vtkglDrawBuffer(drawBuffer);
 
   // recall Blit upper right corner is exclusive of the range
   this->GetState()->vtkglBlitFramebuffer(0, 0, this->Size[0], this->Size[1], 0, 0, this->Size[0],
@@ -113,6 +155,23 @@ void vtkIOSRenderWindow::DestroyWindow()
     this->MakeCurrent();
     this->ReleaseGraphicsResources(this);
   }
+  if (this->GetContextId())
+  {
+    CFRelease((__bridge CFTypeRef)this->GetContextId());
+  }
+  if (this->FramebufferId != 0)
+  {
+    GLuint fb = this->FramebufferId;
+    glDeleteFramebuffers(1, &fb);
+    this->FramebufferId = 0;
+  }
+  if (this->DepthRenderbufferId != 0)
+  {
+    GLuint rb = this->DepthRenderbufferId;
+    glDeleteRenderbuffers(1, &rb);
+    this->DepthRenderbufferId = 0;
+  }
+
   this->SetContextId(NULL);
   this->SetPixelFormat(NULL);
 
@@ -178,10 +237,10 @@ vtkTypeBool vtkIOSRenderWindow::GetEventPending()
 //----------------------------------------------------------------------------
 void vtkIOSRenderWindow::MakeCurrent()
 {
-  // if (this->GetContextId())
-  //   {
-  //   [(NSOpenGLContext*)this->GetContextId() makeCurrentContext];
-  //   }
+  if (this->GetContextId())
+  {
+    [EAGLContext setCurrentContext:(__bridge EAGLContext*)this->GetContextId()];
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -189,7 +248,11 @@ void vtkIOSRenderWindow::MakeCurrent()
 // Tells if this window is the current OpenGL context for the calling thread.
 bool vtkIOSRenderWindow::IsCurrent()
 {
-  return true;
+  if (!this->GetContextId())
+  {
+    return false;
+  }
+  return [EAGLContext currentContext] == (__bridge EAGLContext*)this->GetContextId();
 }
 
 //----------------------------------------------------------------------------
@@ -276,11 +339,14 @@ void vtkIOSRenderWindow::Frame()
   this->MakeCurrent();
   this->Superclass::Frame();
 
-  if (!this->AbortRender && this->DoubleBuffer && this->SwapBuffers)
+  if (this->GetContextId())
   {
-    //    [(NSOpenGLContext*)this->GetContextId() flushBuffer];
+    GLuint colorRenderbuffer = (GLuint)(uintptr_t)this->GetPixelFormat();
+    glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
+    [(__bridge EAGLContext*)this->GetContextId() presentRenderbuffer:GL_RENDERBUFFER];
   }
 }
+
 
 //----------------------------------------------------------------------------
 // Specify various window parameters.
@@ -323,12 +389,103 @@ void vtkIOSRenderWindow::CreateAWindow()
 }
 
 //----------------------------------------------------------------------------
-void vtkIOSRenderWindow::CreateGLContext() {}
+void vtkIOSRenderWindow::CreateGLContext()
+{
+  if (this->GetContextId())
+  {
+    return;
+  }
+
+  UIView* view = (__bridge UIView*)this->GetWindowId();
+  if (!view)
+  {
+    UIView* parent = (__bridge UIView*)this->GetParentId();
+    CGRect frame = parent ? parent.bounds : CGRectMake(0, 0, this->Size[0], this->Size[1]);
+    vtkIOSGLView* glView = [[vtkIOSGLView alloc] initWithFrame:frame];
+    view = glView;
+    if (parent)
+    {
+      view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+      [parent addSubview:view];
+    }
+    this->SetWindowId((__bridge void*)view);
+  }
+
+  // Ensure correct backing scale
+  if (view.window)
+  {
+    view.contentScaleFactor = view.window.screen.scale;
+  }
+  else
+  {
+    view.contentScaleFactor = [UIScreen mainScreen].scale;
+  }
+
+  // Make the view's layer an EAGL layer.
+  CAEAGLLayer* eaglLayer = (CAEAGLLayer*)view.layer;
+  eaglLayer.opaque = YES;
+  eaglLayer.contentsScale = view.contentScaleFactor;
+  eaglLayer.drawableProperties = @{
+    kEAGLDrawablePropertyRetainedBacking : @NO,
+    kEAGLDrawablePropertyColorFormat : kEAGLColorFormatRGBA8
+  };
+
+  EAGLContext* context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+  if (!context)
+  {
+    context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+  }
+  CFRetain((__bridge CFTypeRef)context);
+  this->SetContextId((__bridge void*)context);
+  [EAGLContext setCurrentContext:context];
+
+  GLuint colorRenderbuffer = 0;
+  GLuint depthRenderbuffer = 0;
+  GLuint framebuffer = 0;
+  glGenRenderbuffers(1, &colorRenderbuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
+  [context renderbufferStorage:GL_RENDERBUFFER fromDrawable:eaglLayer];
+  GLint rbWidth = 0;
+  GLint rbHeight = 0;
+  glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &rbWidth);
+  glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &rbHeight);
+
+  glGenRenderbuffers(1, &depthRenderbuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, depthRenderbuffer);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, (GLsizei)(view.bounds.size.width * view.contentScaleFactor), (GLsizei)(view.bounds.size.height * view.contentScaleFactor));
+
+  glGenFramebuffers(1, &framebuffer);
+  glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRenderbuffer);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthRenderbuffer);
+
+  this->FramebufferId = framebuffer;
+  this->DepthRenderbufferId = depthRenderbuffer;
+
+  GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  (void)status;
+
+  this->SetPixelFormat(reinterpret_cast<void*>((uintptr_t)colorRenderbuffer));
+  this->SetRootWindow((__bridge void*)view.window);
+  this->OwnContext = 1;
+  this->WindowCreated = 1;
+  this->ViewCreated = 1;
+}
+
+
 
 //----------------------------------------------------------------------------
 // Initialize the rendering window.
 void vtkIOSRenderWindow::Initialize()
 {
+  this->CreateGLContext();
+  this->MakeCurrent();
+  if (this->FramebufferId != 0)
+  {
+    glBindFramebuffer(GL_FRAMEBUFFER, this->FramebufferId);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, this->FramebufferId);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, this->FramebufferId);
+  }
   this->OpenGLInit();
   this->Mapped = 1;
 }
@@ -437,58 +594,125 @@ int vtkIOSRenderWindow::GetDepthBufferSize()
 }
 
 //----------------------------------------------------------------------------
+int vtkIOSRenderWindow::GetColorBufferSizes(int* rgba)
+{
+  if (rgba == nullptr)
+  {
+    return 0;
+  }
+  rgba[0] = 0;
+  rgba[1] = 0;
+  rgba[2] = 0;
+  rgba[3] = 0;
+
+  if (!this->Initialized)
+  {
+    return 0;
+  }
+
+  this->MakeCurrent();
+  GLint size = 0;
+
+  while (glGetError() != GL_NO_ERROR)
+  {
+  }
+
+  glGetFramebufferAttachmentParameteriv(
+    GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_RED_SIZE, &size);
+  if (!glGetError())
+  {
+    rgba[0] = static_cast<int>(size);
+  }
+  glGetFramebufferAttachmentParameteriv(
+    GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_GREEN_SIZE, &size);
+  if (!glGetError())
+  {
+    rgba[1] = static_cast<int>(size);
+  }
+  glGetFramebufferAttachmentParameteriv(
+    GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_BLUE_SIZE, &size);
+  if (!glGetError())
+  {
+    rgba[2] = static_cast<int>(size);
+  }
+  glGetFramebufferAttachmentParameteriv(
+    GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE, &size);
+  if (!glGetError())
+  {
+    rgba[3] = static_cast<int>(size);
+  }
+
+  return 1;
+}
+
+//----------------------------------------------------------------------------
 // Returns the UIWindow* associated with this vtkRenderWindow.
 void* vtkIOSRenderWindow::GetRootWindow()
 {
-  return NULL;
+  return this->RootWindow;
 }
 
 //----------------------------------------------------------------------------
 // Sets the UIWindow* associated with this vtkRenderWindow.
-void vtkIOSRenderWindow::SetRootWindow(void* vtkNotUsed(arg)) {}
+void vtkIOSRenderWindow::SetRootWindow(void* arg)
+{
+  this->RootWindow = arg;
+}
 
 //----------------------------------------------------------------------------
 // Returns the UIView* associated with this vtkRenderWindow.
 void* vtkIOSRenderWindow::GetWindowId()
 {
-  return NULL;
+  return this->WindowId;
 }
 
 //----------------------------------------------------------------------------
 // Sets the UIView* associated with this vtkRenderWindow.
-void vtkIOSRenderWindow::SetWindowId(void* vtkNotUsed(arg)) {}
+void vtkIOSRenderWindow::SetWindowId(void* arg)
+{
+  this->WindowId = arg;
+}
 
 //----------------------------------------------------------------------------
 // Returns the UIView* that is the parent of this vtkRenderWindow.
 void* vtkIOSRenderWindow::GetParentId()
 {
-  return NULL;
+  return this->ParentId;
 }
 
 //----------------------------------------------------------------------------
 // Sets the UIView* that this vtkRenderWindow should use as a parent.
-void vtkIOSRenderWindow::SetParentId(void* vtkNotUsed(arg)) {}
+void vtkIOSRenderWindow::SetParentId(void* arg)
+{
+  this->ParentId = arg;
+}
 
 //----------------------------------------------------------------------------
 // Sets the NSOpenGLContext* associated with this vtkRenderWindow.
-void vtkIOSRenderWindow::SetContextId(void* vtkNotUsed(contextId)) {}
+void vtkIOSRenderWindow::SetContextId(void* contextId)
+{
+  this->ContextId = contextId;
+}
 
 //----------------------------------------------------------------------------
 // Returns the NSOpenGLContext* associated with this vtkRenderWindow.
 void* vtkIOSRenderWindow::GetContextId()
 {
-  return NULL;
+  return this->ContextId;
 }
 
 //----------------------------------------------------------------------------
 // Sets the NSOpenGLPixelFormat* associated with this vtkRenderWindow.
-void vtkIOSRenderWindow::SetPixelFormat(void* vtkNotUsed(pixelFormat)) {}
+void vtkIOSRenderWindow::SetPixelFormat(void* pixelFormat)
+{
+  this->PixelFormat = pixelFormat;
+}
 
 //----------------------------------------------------------------------------
 // Returns the NSOpenGLPixelFormat* associated with this vtkRenderWindow.
 void* vtkIOSRenderWindow::GetPixelFormat()
 {
-  return NULL;
+  return this->PixelFormat;
 }
 
 //----------------------------------------------------------------------------
@@ -496,7 +720,7 @@ void vtkIOSRenderWindow::SetWindowInfo(const char* info)
 {
   // The parameter is an ASCII string of a decimal number representing
   // a pointer to the window. Convert it back to a pointer.
-  uptrdiff_t tmp = 0;
+  ptrdiff_t tmp = 0;
   if (info)
   {
     vtk::from_chars(info, tmp);
@@ -510,7 +734,7 @@ void vtkIOSRenderWindow::SetParentInfo(const char* info)
 {
   // The parameter is an ASCII string of a decimal number representing
   // a pointer to the window. Convert it back to a pointer.
-  uptrdiff_t tmp = 0;
+  ptrdiff_t tmp = 0;
   if (info)
   {
     vtk::from_chars(info, tmp);

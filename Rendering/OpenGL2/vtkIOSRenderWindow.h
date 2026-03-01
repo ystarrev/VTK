@@ -240,6 +240,12 @@ public:
    */
   int GetDepthBufferSize() override;
 
+  /**
+   * Get the sizes of the color buffer components.
+   * Override to avoid using GL_BACK_LEFT on GLES.
+   */
+  int GetColorBufferSizes(int* rgba) override;
+
   ///@{
   /**
    * Hide or Show the mouse cursor, it is nice to be able to hide the
@@ -358,6 +364,15 @@ private:
   vtkTypeBool WindowCreated;
   vtkTypeBool ViewCreated;
   vtkTypeBool CursorHidden;
+
+  unsigned int FramebufferId;
+  unsigned int DepthRenderbufferId;
+
+  void* RootWindow;
+  void* WindowId;
+  void* ParentId;
+  void* ContextId;
+  void* PixelFormat;
 
   vtkTypeBool ForceMakeCurrent;
 };

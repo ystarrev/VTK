@@ -102,6 +102,7 @@ set(module_options
   FiltersModeling
   FiltersSources
   ImagingGeneral
+  ImagingStatistics
   IOGeometry
   IOImage
   IOInfovis
@@ -163,6 +164,7 @@ set(ios_cmake_flags
   -DVTK_GROUP_ENABLE_Web:STRING=DONT_WANT
   -DVTK_MODULE_ENABLE_VTK_RenderingOpenGL2:STRING=${enable_option_RenderingOpenGL2}
   -DVTK_MODULE_ENABLE_VTK_ImagingGeneral:STRING=${enable_option_ImagingGeneral}
+  -DVTK_MODULE_ENABLE_VTK_ImagingStatistics:STRING=${enable_option_ImagingStatistics}
   -DVTK_MODULE_ENABLE_VTK_InteractionStyle:STRING=${enable_option_InteractionStyle}
   -DVTK_MODULE_ENABLE_VTK_InteractionWidgets:STRING=${enable_option_InteractionWidgets}
   -DVTK_MODULE_ENABLE_VTK_IOXML:STRING=${enable_option_IOXML}
