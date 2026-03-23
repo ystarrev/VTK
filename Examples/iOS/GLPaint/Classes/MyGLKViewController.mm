@@ -2,34 +2,91 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #import "MyGLKViewController.h"
-#import "vtkIOSRenderWindow.h"
-#import "vtkIOSRenderWindowInteractor.h"
-#include "vtkRenderingOpenGL2ObjectFactory.h"
+#import <QuartzCore/QuartzCore.h>
 
 #include "vtkActor.h"
 #include "vtkCamera.h"
 #include "vtkCommand.h"
 #include "vtkConeSource.h"
-#include "vtkDebugLeaks.h"
 #include "vtkGlyph3D.h"
+#include "vtkInteractorStyleTrackballCamera.h"
 #include "vtkIOSRenderWindow.h"
 #include "vtkIOSRenderWindowInteractor.h"
-#include "vtkInteractorStyleMultiTouchCamera.h"
 #include "vtkNew.h"
-#include "vtkPolyData.h"
+#include "vtkObject.h"
+#include "vtkObjectFactory.h"
+#include "vtkOpenGLCamera.h"
+#include "vtkOpenGLProperty.h"
+#include "vtkOpenGLRayCastImageDisplayHelper.h"
+#include "vtkOpenGLRenderer.h"
+#include "vtkOpenGLShaderProperty.h"
+#include "vtkOpenGLTexture.h"
+#include "vtkOpenGLUniforms.h"
 #include "vtkPolyDataMapper.h"
+#include "vtkProperty.h"
 #include "vtkRenderer.h"
 #include "vtkSphereSource.h"
+#include "vtkTexture.h"
+#include "vtkSmartPointer.h"
+#include "vtkVersion.h"
+
+#include <algorithm>
 
 @interface MyGLKViewController ()
 {
+  vtkSmartPointer<vtkConeSource> _coneSource;
+  vtkSmartPointer<vtkIOSRenderWindow> _renderWindowOwner;
+  vtkSmartPointer<vtkIOSRenderWindowInteractor> _interactorOwner;
+  vtkSmartPointer<vtkOpenGLRenderer> _renderer;
+  CADisplayLink* _displayLink;
+  UIPinchGestureRecognizer* _pinchRecognizer;
+  CGFloat _lastPinchScale;
+  CGSize _lastViewportSize;
+  BOOL _appIsActive;
+  BOOL _didAttachWindow;
+  BOOL _didFrameInitialCamera;
+  BOOL _didInitInteractor;
+  BOOL _leftButtonDown;
 }
 
-@property (strong, nonatomic) EAGLContext* context;
-
+- (void)attachRenderWindowIfNeeded;
+- (void)ensureInteractorInitialized;
+- (void)updateRenderWindowFrame;
+- (void)renderFrame;
+- (void)handlePinch:(UIPinchGestureRecognizer*)recognizer;
+- (void)startDisplayLinkIfNeeded;
+- (void)stopDisplayLink;
 - (void)tearDownGL;
+- (void)applyConeSizeForSliderValue:(float)value;
+- (void)applicationWillResignActive:(NSNotification*)notification;
+- (void)applicationDidBecomeActive:(NSNotification*)notification;
 
 @end
+
+class VTKIOSInlineFactory : public vtkObjectFactory
+{
+public:
+  static VTKIOSInlineFactory* New() { return new VTKIOSInlineFactory(); }
+  vtkTypeMacro(VTKIOSInlineFactory, vtkObjectFactory);
+  const char* GetVTKSourceVersion() VTK_FUTURE_CONST override { return VTK_SOURCE_VERSION; }
+  const char* GetDescription() VTK_FUTURE_CONST override { return "VTK iOS inline factory"; }
+  static vtkObject* CreateOpenGLShaderProperty() { return vtkOpenGLShaderProperty::New(); }
+  static vtkObject* CreateOpenGLUniforms() { return vtkOpenGLUniforms::New(); }
+  static vtkObject* CreateOpenGLCamera() { return vtkOpenGLCamera::New(); }
+  static vtkObject* CreateOpenGLProperty() { return vtkOpenGLProperty::New(); }
+  static vtkObject* CreateOpenGLTexture() { return vtkOpenGLTexture::New(); }
+  static vtkObject* CreateOpenGLRayCastImageDisplayHelper()
+  {
+    return vtkOpenGLRayCastImageDisplayHelper::New();
+  }
+  void RegisterOverridePublic(const char* classOverride, const char* subclass,
+    const char* description, int enableFlag, CreateFunction createFunction,
+    vtkOverrideAttribute* attributes = nullptr)
+  {
+    this->RegisterOverride(classOverride, subclass, description, enableFlag, createFunction,
+      attributes);
+  }
+};
 
 @implementation MyGLKViewController
 
@@ -48,52 +105,71 @@
 //----------------------------------------------------------------------------
 - (vtkIOSRenderWindowInteractor*)getInteractor
 {
-  if (_myVTKRenderWindow)
-  {
-    return (vtkIOSRenderWindowInteractor*)_myVTKRenderWindow->GetInteractor();
-  }
-  else
-  {
-    return NULL;
-  }
+  return _interactorOwner;
 }
 
 - (void)setupPipeline
 {
-  vtkRenderingOpenGL2ObjectFactory* of = vtkRenderingOpenGL2ObjectFactory::New();
-  vtkObjectFactory::RegisterFactory(of);
+  static bool didRegisterOverrides = false;
+  if (!didRegisterOverrides)
+  {
+    VTKIOSInlineFactory* factory = VTKIOSInlineFactory::New();
+    if (factory)
+    {
+      factory->RegisterOverridePublic("vtkShaderProperty", "vtkOpenGLShaderProperty",
+        "OpenGL shader property override", 1, VTKIOSInlineFactory::CreateOpenGLShaderProperty);
+      factory->RegisterOverridePublic("vtkUniforms", "vtkOpenGLUniforms",
+        "OpenGL uniforms override", 1, VTKIOSInlineFactory::CreateOpenGLUniforms);
+      factory->RegisterOverridePublic(
+        "vtkCamera", "vtkOpenGLCamera", "OpenGL camera override", 1,
+        VTKIOSInlineFactory::CreateOpenGLCamera);
+      factory->RegisterOverridePublic(
+        "vtkProperty", "vtkOpenGLProperty", "OpenGL property override", 1,
+        VTKIOSInlineFactory::CreateOpenGLProperty);
+      factory->RegisterOverridePublic(
+        "vtkTexture", "vtkOpenGLTexture", "OpenGL texture override", 1,
+        VTKIOSInlineFactory::CreateOpenGLTexture);
+      factory->RegisterOverridePublic("vtkRayCastImageDisplayHelper",
+        "vtkOpenGLRayCastImageDisplayHelper", "OpenGL ray cast image display helper override", 1,
+        VTKIOSInlineFactory::CreateOpenGLRayCastImageDisplayHelper);
+      vtkObjectFactory::RegisterFactory(factory);
+      factory->Delete();
+    }
+    didRegisterOverrides = true;
+  }
 
-  vtkIOSRenderWindow* renWin = vtkIOSRenderWindow::New();
-  // renWin->DebugOn();
-  [self setVTKRenderWindow:renWin];
+  _renderWindowOwner = vtkSmartPointer<vtkIOSRenderWindow>::New();
+  vtkIOSRenderWindow* renderWindow = _renderWindowOwner.GetPointer();
+  renderWindow->SetMultiSamples(0);
+  renderWindow->SetStencilCapable(0);
+  renderWindow->SetAlphaBitPlanes(0);
+  [self setVTKRenderWindow:renderWindow];
 
-  vtkNew<vtkRenderer> renderer;
-  renWin->AddRenderer(renderer.Get());
+  _interactorOwner = vtkSmartPointer<vtkIOSRenderWindowInteractor>::New();
+  _interactorOwner->SetRenderWindow(renderWindow);
+  vtkNew<vtkInteractorStyleTrackballCamera> style;
+  _interactorOwner->SetInteractorStyle(style.GetPointer());
 
-  // this example uses VTK's built in interaction but you could choose
-  // to use your own instead.
-  vtkRenderWindowInteractor* iren = vtkRenderWindowInteractor::New();
-  iren->SetRenderWindow(renWin);
-
-  vtkInteractorStyleMultiTouchCamera* ismt = vtkInteractorStyleMultiTouchCamera::New();
-  iren->SetInteractorStyle(ismt);
-  ismt->Delete();
+  _renderer = vtkSmartPointer<vtkOpenGLRenderer>::New();
+  renderWindow->AddRenderer(_renderer);
 
   vtkNew<vtkSphereSource> sphere;
-  sphere->SetThetaResolution(8);
-  sphere->SetPhiResolution(8);
+  sphere->SetThetaResolution(24);
+  sphere->SetPhiResolution(24);
 
   vtkNew<vtkPolyDataMapper> sphereMapper;
   sphereMapper->SetInputConnection(sphere->GetOutputPort());
   vtkNew<vtkActor> sphereActor;
-  sphereActor->SetMapper(sphereMapper.Get());
+  sphereActor->SetMapper(sphereMapper.GetPointer());
+  sphereActor->GetProperty()->SetColor(0.92, 0.94, 0.96);
 
-  vtkNew<vtkConeSource> cone;
-  cone->SetResolution(6);
+  _coneSource = vtkSmartPointer<vtkConeSource>::New();
+  _coneSource->SetResolution(24);
+  [self applyConeSizeForSliderValue:self.coneSizeSlider ? self.coneSizeSlider.value : 0.5f];
 
   vtkNew<vtkGlyph3D> glyph;
   glyph->SetInputConnection(sphere->GetOutputPort());
-  glyph->SetSourceConnection(cone->GetOutputPort());
+  glyph->SetSourceConnection(_coneSource->GetOutputPort());
   glyph->SetVectorModeToUseNormal();
   glyph->SetScaleModeToScaleByVector();
   glyph->SetScaleFactor(0.25);
@@ -102,235 +178,405 @@
   spikeMapper->SetInputConnection(glyph->GetOutputPort());
 
   vtkNew<vtkActor> spikeActor;
-  spikeActor->SetMapper(spikeMapper.Get());
+  spikeActor->SetMapper(spikeMapper.GetPointer());
+  spikeActor->GetProperty()->SetColor(0.98, 0.66, 0.22);
 
-  renderer->AddActor(sphereActor.Get());
-  renderer->AddActor(spikeActor.Get());
-  renderer->SetBackground(0.4, 0.5, 0.6);
+  _renderer->AddActor(sphereActor.GetPointer());
+  _renderer->AddActor(spikeActor.GetPointer());
+  _renderer->SetBackground(0.08, 0.10, 0.14);
+  _renderer->ResetCamera();
 }
 
 - (void)viewDidLoad
 {
   [super viewDidLoad];
 
-  self.context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+  _appIsActive = ([UIApplication sharedApplication].applicationState == UIApplicationStateActive);
 
-  if (!self.context)
+  self.view.backgroundColor = [UIColor blackColor];
+  UIView* container = self.vtkContainerView ?: self.view;
+  container.multipleTouchEnabled = YES;
+
+  if (self.vtkContainerView && self.vtkContainerView.superview == self.view)
   {
-    NSLog(@"Failed to create ES context");
+    self.vtkContainerView.translatesAutoresizingMaskIntoConstraints = NO;
+    [NSLayoutConstraint activateConstraints:@[
+      [self.vtkContainerView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+      [self.vtkContainerView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+      [self.vtkContainerView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+      [self.vtkContainerView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+    ]];
   }
 
-  GLKView* view = (GLKView*)self.view;
-  view.context = self.context;
-  view.drawableDepthFormat = GLKViewDrawableDepthFormat24;
-  // view.drawableMultisample = GLKViewDrawableMultisample4X;
-
-  // setup the vis pipeline
   [self setupPipeline];
 
-  [EAGLContext setCurrentContext:self.context];
-  [self resizeView];
-  [self getVTKRenderWindow]->Render();
+  if (!_pinchRecognizer)
+  {
+    _pinchRecognizer =
+      [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(handlePinch:)];
+    _pinchRecognizer.cancelsTouchesInView = YES;
+    _lastPinchScale = 1.0;
+    [container addGestureRecognizer:_pinchRecognizer];
+  }
+
+  if (self.coneSizeSlider)
+  {
+    [self.coneSizeSlider addTarget:self
+                            action:@selector(coneSizeSliderChanged:)
+                  forControlEvents:UIControlEventValueChanged];
+  }
+
+  NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+  [center addObserver:self
+             selector:@selector(applicationWillResignActive:)
+                 name:UIApplicationWillResignActiveNotification
+               object:nil];
+  [center addObserver:self
+             selector:@selector(applicationDidBecomeActive:)
+                 name:UIApplicationDidBecomeActiveNotification
+               object:nil];
 }
 
-- (void)dealloc
+- (void)viewDidAppear:(BOOL)animated
 {
-  [self tearDownGL];
+  [super viewDidAppear:animated];
 
-  if ([EAGLContext currentContext] == self.context)
+  [self attachRenderWindowIfNeeded];
+  [self ensureInteractorInitialized];
+  [self updateRenderWindowFrame];
+  [self renderFrame];
+  [self startDisplayLinkIfNeeded];
+}
+
+- (void)viewWillDisappear:(BOOL)animated
+{
+  [super viewWillDisappear:animated];
+
+  [self stopDisplayLink];
+}
+
+- (void)viewDidLayoutSubviews
+{
+  [super viewDidLayoutSubviews];
+  [self updateRenderWindowFrame];
+}
+
+- (void)viewWillTransitionToSize:(CGSize)size
+       withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator
+{
+  [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
+  (void)size;
+
+  __weak typeof(self) weakSelf = self;
+  [coordinator animateAlongsideTransition:nil
+                               completion:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+                                 MyGLKViewController* strongSelf = weakSelf;
+                                 if (!strongSelf)
+                                 {
+                                   return;
+                                 }
+
+                                 [strongSelf.view layoutIfNeeded];
+                                 [strongSelf updateRenderWindowFrame];
+                                 if (strongSelf->_renderer)
+                                 {
+                                   strongSelf->_renderer->ResetCamera();
+                                   strongSelf->_renderer->ResetCameraClippingRange();
+                                 }
+                                 [strongSelf renderFrame];
+                               }];
+}
+
+- (void)attachRenderWindowIfNeeded
+{
+  if (_didAttachWindow || ![self getVTKRenderWindow])
   {
-    [EAGLContext setCurrentContext:nil];
+    return;
+  }
+
+  UIView* container = self.vtkContainerView ?: self.view;
+  if (!container)
+  {
+    return;
+  }
+
+  UIScreen* screen = nil;
+  if (@available(iOS 13.0, *))
+  {
+    screen = container.window.windowScene.screen;
+  }
+  if (!screen)
+  {
+    screen = container.window.screen ?: self.view.window.screen;
+  }
+
+  CGFloat screenScale = screen ? screen.scale : self.view.traitCollection.displayScale;
+  container.contentScaleFactor = screenScale;
+  container.layer.contentsScale = screenScale;
+  [self getVTKRenderWindow]->SetParentId((__bridge void*)container);
+  [self updateRenderWindowFrame];
+  [self getVTKRenderWindow]->Initialize();
+  [self updateRenderWindowFrame];
+  _didAttachWindow = YES;
+
+  if (_renderer && !_didFrameInitialCamera)
+  {
+    _renderer->ResetCamera();
+    _renderer->ResetCameraClippingRange();
+    _didFrameInitialCamera = YES;
   }
 }
 
-- (void)didReceiveMemoryWarning
+- (void)ensureInteractorInitialized
 {
-  [super didReceiveMemoryWarning];
-
-  if ([self isViewLoaded] && ([[self view] window] == nil))
+  if (_didInitInteractor || !_interactorOwner)
   {
-    self.view = nil;
+    return;
+  }
 
-    [self tearDownGL];
+  _interactorOwner->Initialize();
+  _interactorOwner->Enable();
+  _didInitInteractor = YES;
+}
 
-    if ([EAGLContext currentContext] == self.context)
+- (void)updateRenderWindowFrame
+{
+  if (![self getVTKRenderWindow])
+  {
+    return;
+  }
+
+  UIView* container = self.vtkContainerView ?: self.view;
+  if (!container || CGRectIsEmpty(container.bounds))
+  {
+    return;
+  }
+
+  if (container.window)
+  {
+    container.contentScaleFactor = container.window.screen.scale;
+    container.layer.contentsScale = container.contentScaleFactor;
+  }
+
+  const int width = (int)lround(container.bounds.size.width * container.contentScaleFactor);
+  const int height = (int)lround(container.bounds.size.height * container.contentScaleFactor);
+  const BOOL sizeChanged = (_lastViewportSize.width != width || _lastViewportSize.height != height);
+  [self getVTKRenderWindow]->SetPosition(0, 0);
+  [self getVTKRenderWindow]->SetSize(width, height);
+  if (_interactorOwner)
+  {
+    _interactorOwner->SetSize(width, height);
+  }
+
+  if (sizeChanged && _renderer && _didAttachWindow)
+  {
+    _renderer->ResetCamera();
+    _renderer->ResetCameraClippingRange();
+  }
+
+  _lastViewportSize = CGSizeMake(width, height);
+
+  (void)[self getVTKRenderWindow]->GetWindowId();
+}
+
+- (void)renderFrame
+{
+  if (!_appIsActive || !self.isViewLoaded || !self.view.window)
+  {
+    return;
+  }
+
+  [self attachRenderWindowIfNeeded];
+  [self ensureInteractorInitialized];
+  [self updateRenderWindowFrame];
+  if ([self getVTKRenderWindow])
+  {
+    [self getVTKRenderWindow]->Render();
+  }
+}
+
+- (void)applyConeSizeForSliderValue:(float)value
+{
+  if (!_coneSource)
+  {
+    return;
+  }
+
+  const double normalizedValue = std::max(0.0f, std::min(1.0f, value));
+  const double coneHeight = 0.12 + normalizedValue * 0.45;
+  const double coneRadius = 0.04 + normalizedValue * 0.18;
+  _coneSource->SetHeight(coneHeight);
+  _coneSource->SetRadius(coneRadius);
+  _coneSource->Modified();
+}
+
+- (void)startDisplayLinkIfNeeded
+{
+  if (_displayLink || !_appIsActive || !self.isViewLoaded || !self.view.window)
+  {
+    return;
+  }
+
+  _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(renderFrame)];
+  [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopDisplayLink
+{
+  [_displayLink invalidate];
+  _displayLink = nil;
+}
+
+- (void)applicationWillResignActive:(NSNotification*)notification
+{
+  (void)notification;
+  _appIsActive = NO;
+  [self stopDisplayLink];
+}
+
+- (void)applicationDidBecomeActive:(NSNotification*)notification
+{
+  (void)notification;
+  _appIsActive = YES;
+  [self renderFrame];
+  [self startDisplayLinkIfNeeded];
+}
+
+- (IBAction)coneSizeSliderChanged:(id)sender
+{
+  UISlider* slider = (UISlider*)sender;
+  [self applyConeSizeForSliderValue:slider.value];
+  [self renderFrame];
+}
+
+- (void)handlePinch:(UIPinchGestureRecognizer*)recognizer
+{
+  if (!_renderer || ![self getVTKRenderWindow])
+  {
+    return;
+  }
+
+  vtkCamera* camera = _renderer->GetActiveCamera();
+  if (!camera)
+  {
+    return;
+  }
+
+  if (recognizer.state == UIGestureRecognizerStateBegan)
+  {
+    _lastPinchScale = recognizer.scale;
+    return;
+  }
+
+  if (recognizer.state == UIGestureRecognizerStateChanged)
+  {
+    CGFloat delta = recognizer.scale / _lastPinchScale;
+    if (delta > 0.0)
     {
-      [EAGLContext setCurrentContext:nil];
+      if (camera->GetParallelProjection())
+      {
+        camera->SetParallelScale(camera->GetParallelScale() / delta);
+      }
+      else
+      {
+        camera->Dolly(delta);
+        _renderer->ResetCameraClippingRange();
+      }
+      [self renderFrame];
     }
-    self.context = nil;
+    _lastPinchScale = recognizer.scale;
+    return;
   }
 
-  // Dispose of any resources that can be recreated.
+  if (recognizer.state == UIGestureRecognizerStateEnded ||
+    recognizer.state == UIGestureRecognizerStateCancelled ||
+    recognizer.state == UIGestureRecognizerStateFailed)
+  {
+    _lastPinchScale = 1.0;
+  }
 }
 
 - (void)tearDownGL
 {
-  [EAGLContext setCurrentContext:self.context];
-
-  // free GL resources
-  // ...
+  _leftButtonDown = NO;
+  _didInitInteractor = NO;
+  _didAttachWindow = NO;
+  _didFrameInitialCamera = NO;
+  _lastViewportSize = CGSizeZero;
+  _coneSource = nullptr;
+  _interactorOwner = nullptr;
+  _renderer = nullptr;
+  _renderWindowOwner = nullptr;
+  [self setVTKRenderWindow:nullptr];
 }
 
-- (void)resizeView
+- (void)dealloc
 {
-  double scale = self.view.contentScaleFactor;
-  [self getVTKRenderWindow]->SetSize(
-    self.view.bounds.size.width * scale, self.view.bounds.size.height * scale);
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+  [self stopDisplayLink];
+  [self tearDownGL];
 }
 
-- (void)viewWillLayoutSubviews
+- (void)sendVTKEvent:(unsigned long)event forTouch:(UITouch*)touch
 {
-  [self resizeView];
+  UIView* container = self.vtkContainerView ?: self.view;
+  if (!touch || !container || !_interactorOwner)
+  {
+    return;
+  }
+
+  [self ensureInteractorInitialized];
+  CGPoint location = [touch locationInView:container];
+  int x = (int)lround(location.x * container.contentScaleFactor);
+  int y = (int)lround(location.y * container.contentScaleFactor);
+  _interactorOwner->SetEventInformationFlipY(x, y, 0, 0, 0, 0, nullptr);
+  _interactorOwner->InvokeEvent(event, nullptr);
 }
 
-- (void)glkView:(GLKView*)view drawInRect:(CGRect)rect
-{
-  [self getVTKRenderWindow]->Render();
-}
-
-//=================================================================
-// this example uses VTK's built in interaction but you could choose
-// to use your own instead. The remaining methods forward touch events
-// to VTKs interactor.
-
-// Handles the start of a touch
 - (void)touchesBegan:(NSSet*)touches withEvent:(UIEvent*)event
 {
-  vtkIOSRenderWindowInteractor* interactor = [self getInteractor];
-  if (!interactor)
+  (void)event;
+  UITouch* touch = [touches anyObject];
+  if (!touch || [touches count] != 1)
   {
     return;
   }
 
-  CGRect bounds = [self.view bounds];
-
-  // set the position for all contacts
-  NSSet* myTouches = [event touchesForView:self.view];
-  for (UITouch* touch in myTouches)
-  {
-    // Convert touch point from UIView referential to OpenGL one (upside-down flip)
-    CGPoint location = [touch locationInView:self.view];
-    location.y = bounds.size.height - location.y;
-
-    int index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    if (index < VTKI_MAX_POINTERS)
-    {
-      interactor->SetEventInformation(
-        (int)round(location.x), (int)round(location.y), 0, 0, 0, 0, 0, index);
-    }
-  }
-
-  // handle begin events
-  for (UITouch* touch in touches)
-  {
-    int index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    interactor->SetPointerIndex(index);
-    interactor->LeftButtonPressEvent();
-    NSLog(@"Starting left mouse");
-  }
-
-  // Display the buffer
-  [(GLKView*)self.view display];
+  [self sendVTKEvent:vtkCommand::LeftButtonPressEvent forTouch:touch];
+  _leftButtonDown = YES;
+  [self renderFrame];
 }
 
-// Handles the continuation of a touch.
 - (void)touchesMoved:(NSSet*)touches withEvent:(UIEvent*)event
 {
-  vtkIOSRenderWindowInteractor* interactor = [self getInteractor];
-  if (!interactor)
+  (void)event;
+  UITouch* touch = [touches anyObject];
+  if (!_leftButtonDown || !touch)
   {
     return;
   }
 
-  CGRect bounds = [self.view bounds];
-
-  // set the position for all contacts
-  int index;
-  NSSet* myTouches = [event touchesForView:self.view];
-  for (UITouch* touch in myTouches)
-  {
-    // Convert touch point from UIView referential to OpenGL one (upside-down flip)
-    CGPoint location = [touch locationInView:self.view];
-    location.y = bounds.size.height - location.y;
-
-    index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    if (index < VTKI_MAX_POINTERS)
-    {
-      interactor->SetEventInformation(
-        (int)round(location.x), (int)round(location.y), 0, 0, 0, 0, 0, index);
-    }
-  }
-
-  // fire move event on last index
-  interactor->SetPointerIndex(index);
-  interactor->MouseMoveEvent();
-  //  NSLog(@"Moved left mouse");
-
-  // Display the buffer
-  [(GLKView*)self.view display];
+  [self sendVTKEvent:vtkCommand::MouseMoveEvent forTouch:touch];
+  [self renderFrame];
 }
 
-// Handles the end of a touch event when the touch is a tap.
 - (void)touchesEnded:(NSSet*)touches withEvent:(UIEvent*)event
 {
-  vtkIOSRenderWindowInteractor* interactor = [self getInteractor];
-  if (!interactor)
+  (void)event;
+  UITouch* touch = [touches anyObject];
+  if (!_leftButtonDown || !touch)
   {
     return;
   }
 
-  CGRect bounds = [self.view bounds];
-  // set the position for all contacts
-  NSSet* myTouches = [event touchesForView:self.view];
-  for (UITouch* touch in myTouches)
-  {
-    // Convert touch point from UIView referential to OpenGL one (upside-down flip)
-    CGPoint location = [touch locationInView:self.view];
-    location.y = bounds.size.height - location.y;
-
-    int index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    if (index < VTKI_MAX_POINTERS)
-    {
-      interactor->SetEventInformation(
-        (int)round(location.x), (int)round(location.y), 0, 0, 0, 0, 0, index);
-    }
-  }
-
-  // handle begin events
-  for (UITouch* touch in touches)
-  {
-    int index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    interactor->SetPointerIndex(index);
-    interactor->LeftButtonReleaseEvent();
-    interactor->ClearContact((size_t)(__bridge void*)touch);
-    NSLog(@"lifting left mouse");
-  }
-
-  // Display the buffer
-  [(GLKView*)self.view display];
+  [self sendVTKEvent:vtkCommand::LeftButtonReleaseEvent forTouch:touch];
+  _leftButtonDown = NO;
+  [self renderFrame];
 }
 
-// Handles the end of a touch event.
 - (void)touchesCancelled:(NSSet*)touches withEvent:(UIEvent*)event
 {
-  vtkIOSRenderWindowInteractor* interactor = [self getInteractor];
-  if (!interactor)
-  {
-    return;
-  }
-
-  CGRect bounds = [self.view bounds];
-  UITouch* touch = [[event touchesForView:self.view] anyObject];
-  // Convert touch point from UIView referential to OpenGL one (upside-down flip)
-  CGPoint location = [touch locationInView:self.view];
-  location.y = bounds.size.height - location.y;
-
-  interactor->SetEventInformation((int)round(location.x), (int)round(location.y), 0, 0, 0, 0);
-  interactor->LeftButtonReleaseEvent();
-  // NSLog(@"Ended left mouse");
-
-  // Display the buffer
-  [(GLKView*)self.view display];
+  [self touchesEnded:touches withEvent:event];
 }
 
 @end

@@ -312,6 +312,10 @@ void vtkIOSRenderWindow::SetSize(int width, int height)
     this->Modified();
     this->Size[0] = width;
     this->Size[1] = height;
+    if (this->GetContextId() && this->GetWindowId())
+    {
+      this->ResizeGLBuffers();
+    }
   }
 }
 
@@ -452,7 +456,8 @@ void vtkIOSRenderWindow::CreateGLContext()
 
   glGenRenderbuffers(1, &depthRenderbuffer);
   glBindRenderbuffer(GL_RENDERBUFFER, depthRenderbuffer);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, (GLsizei)(view.bounds.size.width * view.contentScaleFactor), (GLsizei)(view.bounds.size.height * view.contentScaleFactor));
+  glRenderbufferStorage(
+    GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, static_cast<GLsizei>(rbWidth), static_cast<GLsizei>(rbHeight));
 
   glGenFramebuffers(1, &framebuffer);
   glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
@@ -465,11 +470,62 @@ void vtkIOSRenderWindow::CreateGLContext()
   GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
   (void)status;
 
+  this->Size[0] = static_cast<int>(rbWidth);
+  this->Size[1] = static_cast<int>(rbHeight);
+
   this->SetPixelFormat(reinterpret_cast<void*>((uintptr_t)colorRenderbuffer));
   this->SetRootWindow((__bridge void*)view.window);
   this->OwnContext = 1;
   this->WindowCreated = 1;
   this->ViewCreated = 1;
+}
+
+//----------------------------------------------------------------------------
+void vtkIOSRenderWindow::ResizeGLBuffers()
+{
+  UIView* view = (__bridge UIView*)this->GetWindowId();
+  EAGLContext* context = (__bridge EAGLContext*)this->GetContextId();
+  GLuint colorRenderbuffer = static_cast<GLuint>(reinterpret_cast<uintptr_t>(this->GetPixelFormat()));
+  if (!view || !context || colorRenderbuffer == 0 || this->FramebufferId == 0 ||
+    this->DepthRenderbufferId == 0)
+  {
+    return;
+  }
+
+  [EAGLContext setCurrentContext:context];
+
+  if (view.window)
+  {
+    view.contentScaleFactor = view.window.screen.scale;
+  }
+  else
+  {
+    view.contentScaleFactor = [UIScreen mainScreen].scale;
+  }
+
+  CAEAGLLayer* eaglLayer = (CAEAGLLayer*)view.layer;
+  eaglLayer.contentsScale = view.contentScaleFactor;
+
+  glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
+  [context renderbufferStorage:GL_RENDERBUFFER fromDrawable:eaglLayer];
+
+  GLint rbWidth = 0;
+  GLint rbHeight = 0;
+  glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &rbWidth);
+  glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &rbHeight);
+
+  glBindRenderbuffer(GL_RENDERBUFFER, this->DepthRenderbufferId);
+  glRenderbufferStorage(
+    GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, static_cast<GLsizei>(rbWidth), static_cast<GLsizei>(rbHeight));
+
+  glBindFramebuffer(GL_FRAMEBUFFER, this->FramebufferId);
+  glFramebufferRenderbuffer(
+    GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRenderbuffer);
+  glFramebufferRenderbuffer(
+    GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, this->DepthRenderbufferId);
+
+  this->Size[0] = static_cast<int>(rbWidth);
+  this->Size[1] = static_cast<int>(rbHeight);
 }
 
 

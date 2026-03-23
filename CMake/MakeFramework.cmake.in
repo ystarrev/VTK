@@ -1,9 +1,9 @@
 #
 # Before calling this, ensure that the following variables are set:
 #
-# VTK_GLOB_LIBS - a path containing a wildcard suitable for globbing
+# VTK_INSTALL_DIRS - a ;-separated list of install prefixes containing libvtk*.a
 # VTK_INSTALLED_HEADERS - the path containing all headers for the framework
-# CMAKE_FRAMEWORK_INSTALL_PREFIX - the path in which to make vtk.framework
+# FRAMEWORK_PATH - the full output path to the framework to create
 #
 
 # Make sure VTK is installed.
@@ -12,30 +12,65 @@ if (NOT EXISTS "@VTK_INSTALLED_HEADERS@")
           "VTK not installed. Build the source then build the 'install' target.")
 endif()
 
-# Ensure a framework path is set
-if (NOT EXISTS "@CMAKE_FRAMEWORK_INSTALL_PREFIX@")
+# Ensure a framework output path is set.
+if ("@FRAMEWORK_PATH@" STREQUAL "")
   message(FATAL_ERROR
-          "Please specify a CMAKE_FRAMEWORK_INSTALL_PREFIX.")
+          "Please specify a FRAMEWORK_PATH.")
 endif()
 
-# Glob all input libs
-file(GLOB VTK_LIB_GLOB
-  @VTK_GLOB_LIBS@
-)
+set(_vtk_install_dirs "@VTK_INSTALL_DIRS@")
+if ("${_vtk_install_dirs}" STREQUAL "")
+  message(FATAL_ERROR
+          "Please specify VTK_INSTALL_DIRS.")
+endif()
 
-# Set framework output path
-set(FRAMEWORK_PATH "@CMAKE_FRAMEWORK_INSTALL_PREFIX@/vtk.framework")
+set(_framework_path "@FRAMEWORK_PATH@")
+get_filename_component(_framework_parent "${_framework_path}" DIRECTORY)
 
-# Do these individually, as we don't want them piped
-execute_process(COMMAND mkdir -p "${FRAMEWORK_PATH}")
-execute_process(COMMAND mkdir -p "${FRAMEWORK_PATH}/Headers")
+execute_process(COMMAND mkdir -p "${_framework_parent}")
+execute_process(COMMAND rm -rf "${_framework_path}")
+execute_process(COMMAND mkdir -p "${_framework_path}/Headers")
 execute_process(COMMAND cp -r "@VTK_INSTALLED_HEADERS@/"
-                              "${FRAMEWORK_PATH}/Headers/.")
-execute_process(COMMAND libtool -static -o
-                      "${FRAMEWORK_PATH}/vtk_lib"
-                      ${VTK_LIB_GLOB})
-execute_process(COMMAND lipo -create "${FRAMEWORK_PATH}/vtk_lib"
-                             -output "${FRAMEWORK_PATH}/vtk")
-execute_process(COMMAND rm "${FRAMEWORK_PATH}/vtk_lib")
+                              "${_framework_path}/Headers/.")
 
-message(STATUS "Created ${FRAMEWORK_PATH}")
+set(_combined_archives)
+set(_archive_index 0)
+foreach (_install_dir IN LISTS _vtk_install_dirs)
+  file(GLOB _vtk_lib_glob
+    "${_install_dir}/lib/libvtk*.a"
+  )
+  if (NOT _vtk_lib_glob)
+    message(FATAL_ERROR
+            "No VTK static libraries found under ${_install_dir}/lib.")
+  endif ()
+
+  set(_combined_archive "${_framework_path}/vtk_lib_${_archive_index}.a")
+  execute_process(
+    COMMAND libtool -static -o "${_combined_archive}" ${_vtk_lib_glob}
+    RESULT_VARIABLE _libtool_result)
+  if (NOT _libtool_result EQUAL 0)
+    message(FATAL_ERROR
+            "Failed to combine static libraries under ${_install_dir}.")
+  endif ()
+  list(APPEND _combined_archives "${_combined_archive}")
+  math(EXPR _archive_index "${_archive_index} + 1")
+endforeach ()
+
+list(LENGTH _combined_archives _combined_archives_len)
+if (_combined_archives_len EQUAL 1)
+  execute_process(COMMAND cp "${_combined_archives}" "${_framework_path}/vtk")
+else ()
+  execute_process(
+    COMMAND lipo -create ${_combined_archives} -output "${_framework_path}/vtk"
+    RESULT_VARIABLE _lipo_result)
+  if (NOT _lipo_result EQUAL 0)
+    message(FATAL_ERROR
+            "Failed to create a universal framework binary for ${_framework_path}.")
+  endif ()
+endif ()
+
+foreach (_combined_archive IN LISTS _combined_archives)
+  execute_process(COMMAND rm -f "${_combined_archive}")
+endforeach ()
+
+message(STATUS "Created ${_framework_path}")

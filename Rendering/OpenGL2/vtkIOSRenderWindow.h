@@ -342,6 +342,7 @@ protected:
   ~vtkIOSRenderWindow() override;
 
   void CreateGLContext();
+  void ResizeGLBuffers();
 
   // blits the display buffers to the appropriate hardware buffers
   void BlitDisplayFramebuffersToHardware() override;

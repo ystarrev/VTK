@@ -1,0 +1,41 @@
+#
+# Before calling this, ensure that the following variables are set:
+#
+# VTK_XCFRAMEWORK_PATH - the full output path to the xcframework to create
+# VTK_FRAMEWORK_PATHS - a ;-separated list of framework paths to package
+#
+
+set(_xcframework_path "@VTK_XCFRAMEWORK_PATH@")
+if ("${_xcframework_path}" STREQUAL "")
+  message(FATAL_ERROR
+          "Please specify VTK_XCFRAMEWORK_PATH.")
+endif ()
+
+set(_framework_paths "@VTK_FRAMEWORK_PATHS@")
+if ("${_framework_paths}" STREQUAL "")
+  message(FATAL_ERROR
+          "Please specify VTK_FRAMEWORK_PATHS.")
+endif ()
+
+set(_create_xcframework_args -create-xcframework)
+foreach (_framework_path IN LISTS _framework_paths)
+  if (NOT EXISTS "${_framework_path}")
+    message(FATAL_ERROR
+            "Framework ${_framework_path} does not exist.")
+  endif ()
+  list(APPEND _create_xcframework_args -framework "${_framework_path}")
+endforeach ()
+list(APPEND _create_xcframework_args -output "${_xcframework_path}")
+
+get_filename_component(_xcframework_parent "${_xcframework_path}" DIRECTORY)
+execute_process(COMMAND mkdir -p "${_xcframework_parent}")
+execute_process(COMMAND rm -rf "${_xcframework_path}")
+execute_process(
+  COMMAND xcodebuild ${_create_xcframework_args}
+  RESULT_VARIABLE _xcframework_result)
+if (NOT _xcframework_result EQUAL 0)
+  message(FATAL_ERROR
+          "Failed to create xcframework ${_xcframework_path}.")
+endif ()
+
+message(STATUS "Created ${_xcframework_path}")

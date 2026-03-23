@@ -1,29 +1,65 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="2.0" toolsVersion="2844" systemVersion="12C60" targetRuntime="iOS.CocoaTouch.iPad" propertyAccessControl="none" initialViewController="UR8-Xp-qZf">
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="24506" targetRuntime="iOS.CocoaTouch.iPad" propertyAccessControl="none" useAutolayout="YES" colorMatched="YES" initialViewController="UR8-Xp-qZf">
+    <device id="ipad10_9rounded" orientation="portrait" layout="fullscreen" appearance="light"/>
     <dependencies>
-        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="1930"/>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="24504"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <scenes>
-        <!--GLKit View Controller-->
+        <!--MyGLK View Controller-->
         <scene sceneID="Owj-Gb-pwv">
             <objects>
-                <glkViewController autoresizesArchivedViewToFullSize="NO" preferredFramesPerSecond="30" id="UR8-Xp-qZf" customClass="MyGLKViewController" sceneMemberID="viewController">
-                    <glkView key="view" opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" id="Ewb-QI-kzc">
-                        <rect key="frame" x="0.0" y="20" width="768" height="1004"/>
-                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
-                        <connections>
-                            <outlet property="delegate" destination="UR8-Xp-qZf" id="CIk-fJ-SDQ"/>
-                        </connections>
-                    </glkView>
-                </glkViewController>
+                <viewController id="UR8-Xp-qZf" customClass="MyGLKViewController" sceneMemberID="viewController">
+                    <layoutGuides>
+                        <viewControllerLayoutGuide type="top" id="fJS-KC-OUs"/>
+                        <viewControllerLayoutGuide type="bottom" id="seL-MP-u4O"/>
+                    </layoutGuides>
+                    <view key="view" contentMode="scaleToFill" id="Ewb-QI-kzc">
+                        <rect key="frame" x="0.0" y="0.0" width="820" height="1180"/>
+                        <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
+                        <subviews>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="s0K-eN-J8d">
+                                <rect key="frame" x="0.0" y="0.0" width="820" height="1180"/>
+                                <color key="backgroundColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                            </view>
+                            <label opaque="NO" userInteractionEnabled="NO" alpha="0.75" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="ConeSize" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="JOG-kh-8UH">
+                                <rect key="frame" x="374" y="1082" width="72.5" height="21"/>
+                                <fontDescription key="fontDescription" type="system" pointSize="17"/>
+                                <color key="textColor" red="1" green="1" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                <nil key="highlightedColor"/>
+                            </label>
+                            <slider opaque="NO" alpha="0.65000000000000002" contentMode="scaleToFill" contentHorizontalAlignment="center" contentVerticalAlignment="center" value="0.5" minValue="0.0" maxValue="1" translatesAutoresizingMaskIntoConstraints="NO" id="T2x-1A-WJd">
+                                <rect key="frame" x="60" y="1102" width="700" height="34"/>
+                                <color key="minimumTrackTintColor" red="1" green="1" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                <color key="maximumTrackTintColor" red="1" green="1" blue="1" alpha="0.34999999999999998" colorSpace="custom" customColorSpace="sRGB"/>
+                                <color key="thumbTintColor" red="1" green="1" blue="1" alpha="0.90000000000000002" colorSpace="custom" customColorSpace="sRGB"/>
+                                <connections>
+                                    <action selector="coneSizeSliderChanged:" destination="UR8-Xp-qZf" eventType="valueChanged" id="PrP-q4-i1L"/>
+                                </connections>
+                            </slider>
+                        </subviews>
+                        <color key="backgroundColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <constraints>
+                            <constraint firstItem="s0K-eN-J8d" firstAttribute="top" secondItem="Ewb-QI-kzc" secondAttribute="top" id="5"/>
+                            <constraint firstAttribute="bottom" secondItem="s0K-eN-J8d" secondAttribute="bottom" id="6"/>
+                            <constraint firstItem="s0K-eN-J8d" firstAttribute="leading" secondItem="Ewb-QI-kzc" secondAttribute="leading" id="7"/>
+                            <constraint firstAttribute="trailing" secondItem="s0K-eN-J8d" secondAttribute="trailing" id="8"/>
+                            <constraint firstItem="T2x-1A-WJd" firstAttribute="leading" secondItem="Ewb-QI-kzc" secondAttribute="leading" constant="60" id="9"/>
+                            <constraint firstAttribute="trailing" secondItem="T2x-1A-WJd" secondAttribute="trailing" constant="60" id="10"/>
+                            <constraint firstAttribute="bottom" secondItem="T2x-1A-WJd" secondAttribute="bottom" constant="44" id="11"/>
+                            <constraint firstItem="JOG-kh-8UH" firstAttribute="centerX" secondItem="T2x-1A-WJd" secondAttribute="centerX" id="12"/>
+                            <constraint firstAttribute="bottom" secondItem="JOG-kh-8UH" secondAttribute="bottom" constant="77" id="13"/>
+                        </constraints>
+                    </view>
+                    <connections>
+                        <outlet property="coneSizeSlider" destination="T2x-1A-WJd" id="3Qv-H3-Bu8"/>
+                        <outlet property="vtkContainerView" destination="s0K-eN-J8d" id="CIk-fJ-SDQ"/>
+                    </connections>
+                </viewController>
                 <placeholder placeholderIdentifier="IBFirstResponder" id="gdh-Oy-JpF" userLabel="First Responder" sceneMemberID="firstResponder"/>
             </objects>
-            <point key="canvasLocation" x="-400" y="-1610"/>
+            <point key="canvasLocation" x="-292.6829268292683" y="-818.64406779661022"/>
         </scene>
     </scenes>
-    <simulatedMetricsContainer key="defaultSimulatedMetrics">
-        <simulatedStatusBarMetrics key="statusBar" statusBarStyle="blackTranslucent"/>
-        <simulatedOrientationMetrics key="orientation"/>
-        <simulatedScreenMetrics key="destination"/>
-    </simulatedMetricsContainer>
 </document>

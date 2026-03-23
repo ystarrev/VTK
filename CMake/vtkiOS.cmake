@@ -38,6 +38,8 @@ set(IOS_EMBED_BITCODE ON CACHE BOOL "Embed LLVM bitcode")
 
 set(CMAKE_FRAMEWORK_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/frameworks"
     CACHE PATH "Framework install path")
+set(VTK_IOS_CREATE_XCFRAMEWORK ON
+    CACHE BOOL "Create vtk.xcframework alongside per-platform vtk.framework outputs")
 
 # Fail if the install path is invalid
 if (NOT EXISTS ${CMAKE_INSTALL_PREFIX})
@@ -229,8 +231,9 @@ if (${SIMULATOR_ARCHS_NBR})
   crosscompile(vtk-ios-simulator
     ${CMAKE_CURRENT_BINARY_DIR}/CMake/ios.simulator.toolchain.cmake
   )
-  set(VTK_GLOB_LIBS "${VTK_GLOB_LIBS} \"${INSTALL_DIR}/vtk-ios-simulator/lib/libvtk*.a\"" )
   list(APPEND IOS_ARCHITECTURES vtk-ios-simulator )
+  list(APPEND IOS_SIMULATOR_TARGETS vtk-ios-simulator)
+  list(APPEND IOS_SIMULATOR_INSTALL_DIRS "${INSTALL_DIR}/vtk-ios-simulator")
 endif()
 
 # for each device architecture
@@ -243,17 +246,68 @@ foreach (arch ${IOS_DEVICE_ARCHITECTURES})
   crosscompile(vtk-ios-device-${arch}
     ${CMAKE_CURRENT_BINARY_DIR}/CMake/ios.device.toolchain.${arch}.cmake
   )
-  set(VTK_GLOB_LIBS "${VTK_GLOB_LIBS} \"${INSTALL_DIR}/vtk-ios-device-${arch}/lib/libvtk*.a\"" )
   list(APPEND IOS_ARCHITECTURES vtk-ios-device-${arch} )
+  list(APPEND IOS_DEVICE_TARGETS vtk-ios-device-${arch})
+  list(APPEND IOS_DEVICE_INSTALL_DIRS "${INSTALL_DIR}/vtk-ios-device-${arch}")
 endforeach()
 
-# Pile it all into a framework
+# Package frameworks per Apple platform.
 list(GET IOS_ARCHITECTURES 0 IOS_ARCH_FIRST)
 set(VTK_INSTALLED_HEADERS
     "${INSTALL_DIR}/${IOS_ARCH_FIRST}/include/vtk-${VTK_MAJOR_VERSION}.${VTK_MINOR_VERSION}")
-configure_file(CMake/MakeFramework.cmake.in
-               ${CMAKE_CURRENT_BINARY_DIR}/CMake/MakeFramework.cmake
-               @ONLY)
+
+set(VTK_FRAMEWORK_PATHS)
+
+if (IOS_SIMULATOR_INSTALL_DIRS)
+  set(VTK_INSTALL_DIRS "${IOS_SIMULATOR_INSTALL_DIRS}")
+  set(FRAMEWORK_PATH "${CMAKE_FRAMEWORK_INSTALL_PREFIX}/iphonesimulator/vtk.framework")
+  configure_file(CMake/MakeFramework.cmake.in
+                 ${CMAKE_CURRENT_BINARY_DIR}/CMake/MakeFrameworkSimulator.cmake
+                 @ONLY)
+  add_custom_target(vtk-framework-simulator
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/CMake/MakeFrameworkSimulator.cmake
+    DEPENDS ${IOS_SIMULATOR_TARGETS})
+  list(APPEND VTK_FRAMEWORK_PATHS "${FRAMEWORK_PATH}")
+endif ()
+
+if (IOS_DEVICE_INSTALL_DIRS)
+  set(VTK_INSTALL_DIRS "${IOS_DEVICE_INSTALL_DIRS}")
+  set(FRAMEWORK_PATH "${CMAKE_FRAMEWORK_INSTALL_PREFIX}/iphoneos/vtk.framework")
+  configure_file(CMake/MakeFramework.cmake.in
+                 ${CMAKE_CURRENT_BINARY_DIR}/CMake/MakeFrameworkDevice.cmake
+                 @ONLY)
+  add_custom_target(vtk-framework-device
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/CMake/MakeFrameworkDevice.cmake
+    DEPENDS ${IOS_DEVICE_TARGETS})
+  list(APPEND VTK_FRAMEWORK_PATHS "${FRAMEWORK_PATH}")
+endif ()
+
+set(_vtk_framework_deps)
+if (TARGET vtk-framework-device)
+  list(APPEND _vtk_framework_deps vtk-framework-device)
+endif ()
+if (TARGET vtk-framework-simulator)
+  list(APPEND _vtk_framework_deps vtk-framework-simulator)
+endif ()
+
 add_custom_target(vtk-framework ALL
-  COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/CMake/MakeFramework.cmake
-  DEPENDS ${IOS_ARCHITECTURES})
+  DEPENDS ${_vtk_framework_deps})
+
+set(VTK_XCFRAMEWORK_PATH "${CMAKE_FRAMEWORK_INSTALL_PREFIX}/vtk.xcframework")
+configure_file(CMake/MakeXCFramework.cmake.in
+               ${CMAKE_CURRENT_BINARY_DIR}/CMake/MakeXCFramework.cmake
+               @ONLY)
+
+set(_vtk_xcframework_deps)
+if (TARGET vtk-framework-simulator)
+  list(APPEND _vtk_xcframework_deps vtk-framework-simulator)
+endif ()
+if (TARGET vtk-framework-device)
+  list(APPEND _vtk_xcframework_deps vtk-framework-device)
+endif ()
+
+if (VTK_IOS_CREATE_XCFRAMEWORK)
+  add_custom_target(vtk-xcframework ALL
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/CMake/MakeXCFramework.cmake
+    DEPENDS vtk-framework ${_vtk_xcframework_deps})
+endif ()
