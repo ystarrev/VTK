@@ -677,6 +677,11 @@ void vtkGLTFImporter::ImportActors(vtkRenderer* renderer)
     }
     const int dasmNode = this->SceneHierarchy->AddNode(dasmNodeName.c_str(), dasmParent);
 
+    if (!node.Name.empty())
+    {
+      this->SceneHierarchy->SetAttribute(dasmNode, "label", node.Name.c_str());
+    }
+
     // Import node's geometry
     if (node.Mesh >= 0)
     {
@@ -755,6 +760,11 @@ void vtkGLTFImporter::ImportActors(vtkRenderer* renderer)
           this->SceneHierarchy->AddNode(meshNodeName.c_str(), /*parent=*/dasmNode);
         this->SceneHierarchy->SetAttribute(actorNode, "parent_node_name", dasmNodeName.c_str());
         this->SceneHierarchy->SetAttribute(actorNode, "flat_actor_id", flatActorId++);
+
+        if (!mesh.Name.empty())
+        {
+          this->SceneHierarchy->SetAttribute(actorNode, "label", mesh.Name.c_str());
+        }
 
         this->InvokeEvent(vtkCommand::UpdateDataEvent);
       }
@@ -1249,8 +1259,7 @@ bool vtkGLTFImporter::GetTemporalInformation(vtkIdType animationIndex, double fr
     if (frameRate > 0)
     {
       nbTimeSteps = 0;
-      timeSteps->SetNumberOfComponents(1);
-      timeSteps->SetNumberOfTuples(0);
+      timeSteps->Initialize();
 
       std::vector<double> ts;
       double period = (1.0 / frameRate);
@@ -1279,7 +1288,7 @@ bool vtkGLTFImporter::GetTemporalInformation(
 
     nbTimeStep = static_cast<int>(model->Animations[animationIndex].AllTimestamps.size());
     timeSteps->Initialize();
-    timeSteps->Allocate(nbTimeStep);
+    timeSteps->ReserveValues(nbTimeStep);
     for (const float& Timestamp : model->Animations[animationIndex].AllTimestamps)
     {
       timeSteps->InsertNextValue(Timestamp);

@@ -115,17 +115,17 @@ void vtkPNGWriter::Write()
       {
         if (this->FilePrefix)
         {
-          auto result = vtk::format_to_n(this->InternalFileName, internalFileNameSize,
-            this->FilePattern, this->FilePrefix, this->FileNumber);
-          *result.out = '\0';
-          bytes_printed = result.size;
+          VTK_FORMAT_IF_ERROR_RETURN(
+            auto result = vtk::format_to_n(this->InternalFileName, internalFileNameSize,
+              this->FilePattern, this->FilePrefix, this->FileNumber);
+            *result.out = '\0'; bytes_printed = result.size, );
         }
         else
         {
-          auto result = vtk::format_to_n(
-            this->InternalFileName, internalFileNameSize, this->FilePattern, "", this->FileNumber);
-          *result.out = '\0';
-          bytes_printed = result.size;
+          VTK_FORMAT_IF_ERROR_RETURN(
+            auto result = vtk::format_to_n(this->InternalFileName, internalFileNameSize,
+              this->FilePattern, "", this->FileNumber);
+            *result.out = '\0'; bytes_printed = result.size, );
         }
       }
       if (bytes_printed >= internalFileNameSize)
@@ -244,7 +244,7 @@ void vtkPNGWriter::WriteSlice(vtkImageData* data, int* uExtent)
       uc->Delete();
     }
     // start out with 10K as a guess for the image size
-    uc->Allocate(10000);
+    uc->ReserveValues(10000);
     png_set_write_fn(png_ptr, static_cast<png_voidp>(this), vtkPNGWriteInit, vtkPNGWriteFlush);
   }
   else

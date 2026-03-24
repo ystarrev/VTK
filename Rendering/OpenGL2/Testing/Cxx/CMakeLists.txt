@@ -66,7 +66,9 @@ vtk_add_test_cxx(vtkRenderingOpenGL2CxxTests tests
   TestPBRMaterials.cxx
   TestPBRMaterialsCoat.cxx
   TestPBRTextureInterpolateScalars.cxx
+  TestPBRMultipleScatteringIBL.cxx
   TestPointFillPass.cxx
+
   TestPointGaussianMapper.cxx
   TestPointGaussianMapperAnisotropic.cxx
   TestPointGaussianMapperOpacity.cxx
@@ -143,4 +145,13 @@ if (VTK_USE_WIN32_OPENGL)
   # TestWin32OpenGLDXRenderWindow requires DirectX
   find_package(DirectX REQUIRED)
   target_link_libraries(vtkRenderingOpenGL2CxxTests PRIVATE DirectX::d3d11 DirectX::dxgi)
+endif ()
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+  if (VTK_WEBASSEMBLY_THREADS)
+    # Proxy to pthreads is required to ensure threads can be created asynchronously.
+    target_link_options(vtkRenderingOpenGL2CxxTests
+      PRIVATE
+        "-sPROXY_TO_PTHREAD=1")
+  endif ()
 endif ()

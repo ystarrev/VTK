@@ -7,12 +7,17 @@ vtk_add_test_python(
   TestArrays.py
   TestBuffer.py
   TestCommand.py
+  TestAffineArray.py
+  TestVTKAffineArray.py
+  TestConstantArray.py
+  TestVTKConstantArray.py
   TestDefaultArgs.py
   TestEmptyInput.py
   TestEnums.py
   TestExecuteMethodFinalizeCrash.py
   TestExpects.py
   TestFilePath.py
+  TestFunctions.py
   TestGhost.py
   TestImplicitArrayInstantiation.py
   TestInvokeEvent.py
@@ -25,7 +30,15 @@ vtk_add_test_python(
   TestOverloads.py
   TestPassByReference.py
   TestPointers.py
+  TestAOSArray.py
+  TestSOABufferAccess.py
+  TestSOADataArray.py
   TestSOADataArrays.py
+  TestStridedArrayPython.py
+  TestIndexedArrayPython.py
+  TestCompositeArrayPython.py
+  TestStructuredPointArrayPython.py
+  TestSOAMemorySafety.py
   TestSetBuffer.py
   TestSetGet.py
   TestSingleton.py
@@ -37,4 +50,5 @@ vtk_add_test_python(
   TestVersion.py
   TestVtkBufferNumpy.py
   TestWeakref.py
+  TestCollectionPythonAPI.py
   )

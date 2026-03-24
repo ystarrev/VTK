@@ -5,9 +5,7 @@
 #define vtkScaledSOADataArrayTemplate_txx
 
 #ifdef VTK_SCALED_SOA_DATA_ARRAY_TEMPLATE_INSTANTIATING
-#define VTK_GDA_VALUERANGE_INSTANTIATING
 #include "vtkDataArrayPrivate.txx"
-#undef VTK_GDA_VALUERANGE_INSTANTIATING
 #endif
 
 #include "vtkScaledSOADataArrayTemplate.h"
@@ -78,7 +76,7 @@ void vtkScaledSOADataArrayTemplate<ValueType>::ShallowCopy(vtkDataArray* other)
   SelfType* o = SelfType::FastDownCast(other);
   if (o)
   {
-    this->Size = o->Size;
+    this->Capacity = o->Capacity;
     this->MaxId = o->MaxId;
     this->SetName(o->Name);
     this->SetNumberOfComponents(o->NumberOfComponents);
@@ -145,11 +143,11 @@ void vtkScaledSOADataArrayTemplate<ValueType>::InsertTuples(
   }
 
   vtkIdType newSize = (maxDstTupleId + 1) * this->NumberOfComponents;
-  if (this->Size < newSize)
+  if (this->Capacity < newSize)
   {
-    if (!this->Resize(maxDstTupleId + 1))
+    if (!this->ReserveTuples(maxDstTupleId + 1))
     {
-      vtkErrorMacro("Resize failed.");
+      vtkErrorMacro("ReserveTuples failed.");
       return;
     }
   }
@@ -209,8 +207,8 @@ void vtkScaledSOADataArrayTemplate<ValueType>::SetArray(
 
   if (updateMaxId)
   {
-    this->Size = numComps * size;
-    this->MaxId = this->Size - 1;
+    this->Capacity = numComps * size;
+    this->MaxId = this->Capacity - 1;
   }
   this->DataChanged();
 }

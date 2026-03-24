@@ -247,6 +247,7 @@ protected:
    * Allocate space for numTuples. Old data is not preserved. If numTuples == 0,
    * all data is freed.
    */
+  VTK_DEPRECATED_IN_9_7_0("No longer needed")
   bool AllocateTuples(vtkIdType numTuples);
 
   /**
@@ -273,20 +274,8 @@ VTK_ABI_NAMESPACE_END
 // declarations for these functions such that the wrapper
 // can see them. The wrappers ignore vtkSOADataArrayTemplate.
 #define vtkCreateSOAWrappedArrayInterface(T)                                                       \
-  int GetDataType() const override;                                                                \
-  T GetDataTypeValueMin() const;                                                                   \
-  T GetDataTypeValueMax() const;                                                                   \
-  void GetTypedTuple(vtkIdType i, T* tuple) VTK_EXPECTS(0 <= i && i < GetNumberOfTuples());        \
-  T GetValue(vtkIdType id) const VTK_EXPECTS(0 <= id && id < GetNumberOfValues());                 \
-  T* GetValueRange(int comp) VTK_SIZEHINT(2);                                                      \
-  T* GetValueRange() VTK_SIZEHINT(2);                                                              \
-  void SetTypedTuple(vtkIdType i, const T* tuple) VTK_EXPECTS(0 <= i && i < GetNumberOfTuples());  \
-  void InsertTypedTuple(vtkIdType i, const T* tuple) VTK_EXPECTS(0 <= i);                          \
-  vtkIdType InsertNextTypedTuple(const T* tuple);                                                  \
-  void SetValue(vtkIdType id, T value) VTK_EXPECTS(0 <= id && id < GetNumberOfValues());           \
-  bool SetNumberOfValues(vtkIdType number) override;                                               \
-  void InsertValue(vtkIdType id, T f) VTK_EXPECTS(0 <= id);                                        \
-  vtkIdType InsertNextValue(T f);                                                                  \
+  vtkCreateWrappedArrayReadInterface(T);                                                           \
+  vtkCreateWrappedArrayWriteInterface(T);                                                          \
   T* GetComponentArrayPointer(int id);                                                             \
   vtkAbstractBuffer* GetComponentBuffer(int comp);                                                 \
   void SetArray(int comp, VTK_ZEROCOPY T* array, vtkIdType size, bool updateMaxId, bool save,      \
@@ -310,7 +299,17 @@ VTK_ABI_NAMESPACE_END
   VTK_ABI_NAMESPACE_BEGIN                                                                          \
   template class VTKCOMMONCORE_EXPORT vtkSOADataArrayTemplate<T>;                                  \
   VTK_ABI_NAMESPACE_END
-
+// This portion must be OUTSIDE the include blockers. This is used to tell
+// libraries other than vtkCommonCore that instantiations of
+// vtkSOADataArrayTemplate can be found externally. This prevents each library
+// from instantiating these on their own.
+#define VTK_SOA_DATA_ARRAY_TEMPLATE_INSTANTIATE_VALUERANGE(T)                                      \
+  namespace vtkDataArrayPrivate                                                                    \
+  {                                                                                                \
+  VTK_ABI_NAMESPACE_BEGIN                                                                          \
+  VTK_INSTANTIATE_VALUERANGE_ARRAYTYPE(vtkSOADataArrayTemplate<T>, T);                             \
+  VTK_ABI_NAMESPACE_END                                                                            \
+  }
 #elif defined(VTK_USE_EXTERN_TEMPLATE)
 #ifndef VTK_SOA_DATA_ARRAY_TEMPLATE_EXTERN
 #define VTK_SOA_DATA_ARRAY_TEMPLATE_EXTERN
@@ -328,6 +327,11 @@ namespace vtkDataArrayPrivate
 {
 VTK_ABI_NAMESPACE_BEGIN
 
+// These are instantiated in vtkGenericDataArrayValueRange${i}.cxx
+VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkSOADataArrayTemplate<long>, long)
+VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkSOADataArrayTemplate<unsigned long>, unsigned long)
+VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkSOADataArrayTemplate<long long>, long long)
+VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkSOADataArrayTemplate<unsigned long long>, unsigned long long)
 // These are instantiated in vtkSOADataArrayTemplateInstantiate${i}.cxx
 VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkSOADataArrayTemplate<float>, double)
 VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkSOADataArrayTemplate<double>, double)

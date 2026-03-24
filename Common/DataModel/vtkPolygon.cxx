@@ -39,11 +39,11 @@ constexpr double VTK_DEFAULT_PLANARITY_TOLERANCE = 0.1; // dZ / max(dX, dY). See
 vtkPolygon::vtkPolygon()
 {
   this->Tris = vtkIdList::New();
-  this->Tris->Allocate(VTK_CELL_SIZE);
+  this->Tris->Reserve(VTK_CELL_SIZE);
   this->Triangle = vtkTriangle::New();
   this->Quad = vtkQuad::New();
   this->TriScalars = vtkDoubleArray::New();
-  this->TriScalars->Allocate(3);
+  this->TriScalars->ReserveValues(3);
   this->Line = vtkLine::New();
   this->Tolerance = 1.0e-06;
   this->Tol = 0.0; // Internal tolerance derived from this->Tolerance
@@ -870,11 +870,11 @@ int vtkPolygon::NonDegenerateTriangulate(vtkIdList* outTris)
     bounds[5] = std::max(pt[2], bounds[5]);
   }
 
-  outTris->Reset();
-  outTris->Allocate(3 * (2 * numPts - 4));
+  outTris->Initialize();
+  outTris->Reserve(3 * (2 * numPts - 4));
 
   vtkPoints* newPts = vtkPoints::New();
-  newPts->Allocate(numPts);
+  newPts->Reserve(numPts);
 
   vtkMergePoints* mergePoints = vtkMergePoints::New();
   mergePoints->InitPointInsertion(newPts, bounds);
@@ -965,7 +965,7 @@ int vtkPolygon::NonDegenerateTriangulate(vtkIdList* outTris)
     }
 
     vtkIdList* outTriangles = vtkIdList::New();
-    outTriangles->Allocate(3 * (2 * polygon->GetNumberOfPoints() - 4));
+    outTriangles->Reserve(3 * (2 * polygon->GetNumberOfPoints() - 4));
 
     polygon->TriangulateLocalIds(0, outTriangles);
 
@@ -2356,6 +2356,34 @@ bool vtkPolygon::ComputeCentroid(vtkIdTypeArray* ids, vtkPoints* p, double c[3])
 {
   return !!vtkPolygon::ComputeCentroid(
     p, ids->GetNumberOfTuples(), ids->GetPointer(0), c, VTK_DEFAULT_PLANARITY_TOLERANCE);
+}
+
+//------------------------------------------------------------------------------
+// Compute a circle interior to a polygon from a points list and a list of point ids
+// that index into the points list. Returns false if the computation is invalid.
+bool vtkPolygon::ComputeInteriorCircle(
+  vtkPoints* p, int numPts, const vtkIdType* ids, double center[3], double& radius2)
+{
+  // First compute the centroid / center.
+  if (!vtkPolygon::ComputeCentroid(p, numPts, ids, center))
+  {
+    return false;
+  }
+
+  // Compute minimum distance (i.e., radius of incircle) to the polygon edges.
+  radius2 = VTK_FLOAT_MAX;
+  double r2, t, p0[3], p1[3];
+
+  // Loop over all edges computing the minimum distance to the edges.
+  for (int i = 0; i < numPts; i++)
+  {
+    p->GetPoint(ids[i], p0);
+    p->GetPoint(ids[(i + 1) % numPts], p1);
+    r2 = vtkLine::DistanceToLine(center, p0, p1, t, nullptr);
+    radius2 = std::min(r2, radius2);
+  }
+
+  return true;
 }
 
 //------------------------------------------------------------------------------

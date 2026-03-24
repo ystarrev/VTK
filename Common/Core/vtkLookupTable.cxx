@@ -26,14 +26,14 @@ vtkStandardNewMacro(vtkLookupTable);
 
 // Construct with range=(0,1); and hsv ranges set up for rainbow color table
 // (from red to blue).
-vtkLookupTable::vtkLookupTable(int sze, int ext)
+vtkLookupTable::vtkLookupTable(int sze, int vtkNotUsed(ext))
 {
   this->NumberOfColors = sze;
   this->Table = vtkUnsignedCharArray::New();
   this->Table->Register(this);
   this->Table->Delete();
   this->Table->SetNumberOfComponents(4);
-  this->Table->Allocate(4 * (sze + NUMBER_OF_SPECIAL_COLORS), 4 * ext);
+  this->Table->ReserveTuples(sze + NUMBER_OF_SPECIAL_COLORS);
 
   this->HueRange[0] = 0.0;
   this->HueRange[1] = 0.66667;
@@ -204,10 +204,10 @@ void vtkLookupTable::SetScale(int scale)
 
 //------------------------------------------------------------------------------
 // Allocate a color table of specified size.
-int vtkLookupTable::Allocate(int sz, int ext)
+int vtkLookupTable::Allocate(int sz, int vtkNotUsed(ext))
 {
   this->NumberOfColors = sz;
-  int a = this->Table->Allocate(4 * (this->NumberOfColors + NUMBER_OF_SPECIAL_COLORS), 4 * ext);
+  int a = this->Table->ReserveValues(4 * (this->NumberOfColors + NUMBER_OF_SPECIAL_COLORS));
   this->Modified();
   return a;
 }
@@ -1447,9 +1447,9 @@ void vtkLookupTable::GetIndexedColor(vtkIdType idx, double rgba[4])
 void vtkLookupTable::ResizeTableForSpecialColors()
 {
   vtkIdType neededColors = this->NumberOfColors + vtkLookupTable::NUMBER_OF_SPECIAL_COLORS;
-  if (this->Table->GetSize() < neededColors * this->Table->GetNumberOfComponents())
+  if (this->Table->GetCapacity() < neededColors * this->Table->GetNumberOfComponents())
   {
-    this->Table->Resize(neededColors);
+    this->Table->ReserveTuples(neededColors);
   }
 }
 VTK_ABI_NAMESPACE_END

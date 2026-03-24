@@ -127,7 +127,7 @@ struct FieldInfo
     return info;
   }
 
-  void InitializeArray(vtkAbstractArray* array, vtkIdType sz, vtkIdType ext) const
+  void InitializeArray(vtkAbstractArray* array, vtkIdType sz, vtkIdType vtkNotUsed(ext)) const
   {
     if (array)
     {
@@ -152,7 +152,7 @@ struct FieldInfo
       {
         darray->SetLookupTable(this->LUT);
       }
-      array->Allocate(sz, ext);
+      array->ReserveValues(sz);
     }
   }
 
@@ -702,7 +702,7 @@ void vtkDataSetAttributesFieldList::InterpolatePoint(int inputIndex, vtkDataSetA
       {
         vtkIdType numIds = inputIds->GetNumberOfIds();
         vtkIdType maxId = inputIds->GetId(0);
-        vtkIdType maxWeight = 0.;
+        double maxWeight = 0.;
         for (int j = 0; j < numIds; j++)
         {
           if (weights[j] > maxWeight)

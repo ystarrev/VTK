@@ -5,9 +5,7 @@
 #define vtkAOSDataArrayTemplate_txx
 
 #ifdef VTK_AOS_DATA_ARRAY_TEMPLATE_INSTANTIATING
-#define VTK_GDA_VALUERANGE_INSTANTIATING
 #include "vtkDataArrayPrivate.txx"
-#undef VTK_GDA_VALUERANGE_INSTANTIATING
 #endif
 
 #include "vtkAOSDataArrayTemplate.h"
@@ -62,8 +60,8 @@ void vtkAOSDataArrayTemplate<ValueTypeT>::SetArray(
     this->Buffer->SetFreeFunction(save != 0, free);
   }
 
-  this->Size = size;
-  this->MaxId = this->Size - 1;
+  this->Capacity = size;
+  this->MaxId = this->Capacity - 1;
   this->DataChanged();
   this->InvokeEvent(vtkCommand::BufferChangedEvent);
 }
@@ -212,9 +210,9 @@ void vtkAOSDataArrayTemplate<ValueTypeT>::InsertComponent(
   vtkIdType tupleIdx, int compIdx, double value)
 {
   const vtkIdType newMaxId = tupleIdx * this->NumberOfComponents + compIdx;
-  if (newMaxId >= this->Size)
+  if (newMaxId >= this->Capacity)
   {
-    if (!this->Resize(newMaxId / this->NumberOfComponents + 1))
+    if (!this->ReserveTuples(newMaxId / this->NumberOfComponents + 1))
     {
       return;
     }
@@ -230,9 +228,9 @@ vtkIdType vtkAOSDataArrayTemplate<ValueTypeT>::InsertNextTuple(const float* tupl
 {
   vtkIdType newMaxId = this->MaxId + this->NumberOfComponents;
   const vtkIdType tupleIdx = newMaxId / this->NumberOfComponents;
-  if (newMaxId >= this->Size)
+  if (newMaxId >= this->Capacity)
   {
-    if (!this->Resize(tupleIdx + 1))
+    if (!this->ReserveTuples(tupleIdx + 1))
     {
       return -1;
     }
@@ -254,9 +252,9 @@ vtkIdType vtkAOSDataArrayTemplate<ValueTypeT>::InsertNextTuple(const double* tup
 {
   vtkIdType newMaxId = this->MaxId + this->NumberOfComponents;
   const vtkIdType tupleIdx = newMaxId / this->NumberOfComponents;
-  if (newMaxId >= this->Size)
+  if (newMaxId >= this->Capacity)
   {
-    if (!this->Resize(tupleIdx + 1))
+    if (!this->ReserveTuples(tupleIdx + 1))
     {
       return -1;
     }
@@ -314,7 +312,7 @@ void vtkAOSDataArrayTemplate<ValueTypeT>::ShallowCopy(vtkDataArray* other)
   SelfType* o = SelfType::FastDownCast(other);
   if (o)
   {
-    this->Size = o->Size;
+    this->Capacity = o->Capacity;
     this->MaxId = o->MaxId;
     this->SetName(o->Name);
     this->SetNumberOfComponents(o->NumberOfComponents);
@@ -372,11 +370,11 @@ void vtkAOSDataArrayTemplate<ValueTypeT>::InsertTuples(
   }
 
   vtkIdType newSize = (maxDstTupleId + 1) * this->NumberOfComponents;
-  if (this->Size < newSize)
+  if (this->Capacity < newSize)
   {
-    if (!this->Resize(maxDstTupleId + 1))
+    if (!this->ReserveTuples(maxDstTupleId + 1))
     {
-      vtkErrorMacro("Resize failed.");
+      vtkErrorMacro("ReserveTuples failed.");
       return;
     }
   }
@@ -425,9 +423,9 @@ typename vtkAOSDataArrayTemplate<ValueTypeT>::ValueType*
 vtkAOSDataArrayTemplate<ValueTypeT>::WritePointer(vtkIdType valueIdx, vtkIdType numValues)
 {
   vtkIdType newSize = valueIdx + numValues;
-  if (newSize > this->Size)
+  if (newSize > this->Capacity)
   {
-    if (!this->Resize(newSize / this->NumberOfComponents + 1))
+    if (!this->ReserveTuples(newSize / this->NumberOfComponents + 1))
     {
       return nullptr;
     }
@@ -470,7 +468,7 @@ bool vtkAOSDataArrayTemplate<ValueTypeT>::AllocateTuples(vtkIdType numTuples)
   vtkIdType numValues = numTuples * this->GetNumberOfComponents();
   if (this->Buffer->Allocate(numValues))
   {
-    this->Size = this->Buffer->GetSize();
+    this->Capacity = this->Buffer->GetSize();
     this->InvokeEvent(vtkCommand::BufferChangedEvent);
     return true;
   }
@@ -489,7 +487,7 @@ bool vtkAOSDataArrayTemplate<ValueTypeT>::ReallocateTuples(vtkIdType numTuples)
 
   if (this->Buffer->Reallocate(newSize))
   {
-    this->Size = this->Buffer->GetSize();
+    this->Capacity = this->Buffer->GetSize();
     // Notify observers that the buffer may have changed
     this->InvokeEvent(vtkCommand::BufferChangedEvent);
     return true;

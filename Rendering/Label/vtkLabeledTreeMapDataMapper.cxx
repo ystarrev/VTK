@@ -45,7 +45,7 @@ vtkLabeledTreeMapDataMapper::vtkLabeledTreeMapDataMapper()
   this->VertexList = vtkIdList::New();
   this->VertexList->SetNumberOfIds(this->NumberOfLabelsAllocated);
   this->TextPoints = vtkPoints::New();
-  this->TextPoints->Allocate(this->NumberOfLabelsAllocated);
+  this->TextPoints->Reserve(this->NumberOfLabelsAllocated);
   this->VerticalLabelProperty = vtkTextProperty::New();
   this->VerticalLabelProperty->SetFontSize(12);
   this->VerticalLabelProperty->SetBold(1);
@@ -240,15 +240,17 @@ void vtkLabeledTreeMapDataMapper::GetVertexLabel(vtkIdType vertex, vtkDataArray*
           string[0] = '\0';
           return;
         }
-        auto result = vtk::format_to_n(string, stringSize, this->LabelFormat,
-          static_cast<char>(numericData->GetComponent(vertex, activeComp)));
-        *result.out = '\0';
+        VTK_FORMAT_IF_ERROR_RETURN(
+          auto result = vtk::format_to_n(string, stringSize, this->LabelFormat,
+            static_cast<char>(numericData->GetComponent(vertex, activeComp)));
+          *result.out = '\0', );
       }
       else
       {
-        auto result = vtk::format_to_n(
-          string, stringSize, this->LabelFormat, numericData->GetComponent(vertex, activeComp));
-        *result.out = '\0';
+        VTK_FORMAT_IF_ERROR_RETURN(
+          auto result = vtk::format_to_n(
+            string, stringSize, this->LabelFormat, numericData->GetComponent(vertex, activeComp));
+          *result.out = '\0', );
       }
     }
     else
@@ -257,16 +259,16 @@ void vtkLabeledTreeMapDataMapper::GetVertexLabel(vtkIdType vertex, vtkDataArray*
       strcat(format, this->LabelFormat);
       for (j = 0; j < (numComp - 1); j++)
       {
-        auto result =
-          vtk::format_to_n(string, stringSize, format, numericData->GetComponent(vertex, j));
-        *result.out = '\0';
+        VTK_FORMAT_IF_ERROR_RETURN(auto result = vtk::format_to_n(string, stringSize, format,
+                                     numericData->GetComponent(vertex, j));
+                                   *result.out = '\0', );
         strcpy(format, string);
         strcat(format, ", ");
         strcat(format, this->LabelFormat);
       }
-      auto result = vtk::format_to_n(
-        string, stringSize, format, numericData->GetComponent(vertex, numComp - 1));
-      *result.out = '\0';
+      VTK_FORMAT_IF_ERROR_RETURN(auto result = vtk::format_to_n(string, stringSize, format,
+                                   numericData->GetComponent(vertex, numComp - 1));
+                                 *result.out = '\0', );
       strcat(string, ")");
     }
   }
@@ -278,15 +280,16 @@ void vtkLabeledTreeMapDataMapper::GetVertexLabel(vtkIdType vertex, vtkDataArray*
       string[0] = '\0';
       return;
     }
-    auto result =
-      vtk::format_to_n(string, stringSize, this->LabelFormat, stringData->GetValue(vertex).c_str());
-    *result.out = '\0';
+    VTK_FORMAT_IF_ERROR_RETURN(auto result = vtk::format_to_n(string, stringSize, this->LabelFormat,
+                                 stringData->GetValue(vertex).c_str());
+                               *result.out = '\0', );
   }
   else // Use the vertex id
   {
     val = static_cast<double>(vertex);
-    auto result = vtk::format_to_n(string, stringSize, this->LabelFormat, val);
-    *result.out = '\0';
+    VTK_FORMAT_IF_ERROR_RETURN(
+      auto result = vtk::format_to_n(string, stringSize, this->LabelFormat, val);
+      *result.out = '\0', );
   }
 }
 
@@ -454,7 +457,7 @@ void vtkLabeledTreeMapDataMapper::RenderOpaqueGeometry(vtkViewport* viewport, vt
       this->NumberOfLabelsAllocated = numVertices;
       this->TextMappers = new vtkTextMapper*[numVertices];
       this->VertexList->SetNumberOfIds(numVertices);
-      this->TextPoints->Allocate(numVertices);
+      this->TextPoints->Reserve(numVertices);
       for (i = 0; i < numVertices; i++)
       {
         this->TextMappers[i] = nullptr;

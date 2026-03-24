@@ -252,12 +252,12 @@ public:
   ///@{
   /**
    * This method lets the user specify data to be held by the array.  The
-   * array argument is a pointer to the data.  size is the size of the
+   * array argument is a pointer to the data. Size is the size of the
    * array supplied by the user (as number of values, not in bytes).
    * Set save to 1 to prevent the class from
    * deleting the array when it cleans up or reallocates memory.  The class
    * uses the actual array provided; it does not copy the data from the
-   * suppled array. If specified, the delete method determines how the data
+   * supplied array. If specified, the delete method determines how the data
    * array will be deallocated. If the delete method is
    * VTK_DATA_ARRAY_FREE, free() will be used. If the delete method is
    * VTK_DATA_ARRAY_DELETE, delete[] will be used. If the delete method is
@@ -357,6 +357,7 @@ protected:
    * Allocate space for numTuples. Old data is not preserved. If numTuples == 0,
    * all data is freed.
    */
+  VTK_DEPRECATED_IN_9_7_0("No longer needed")
   bool AllocateTuples(vtkIdType numTuples);
 
   /**
@@ -383,20 +384,8 @@ VTK_ABI_NAMESPACE_END
 // declarations for these functions such that the wrapper
 // can see them.
 #define vtkCreateWrappedArrayInterface(T)                                                          \
-  int GetDataType() const override;                                                                \
-  T GetDataTypeValueMin() const;                                                                   \
-  T GetDataTypeValueMax() const;                                                                   \
-  void GetTypedTuple(vtkIdType i, T* tuple) VTK_EXPECTS(0 <= i && i < GetNumberOfTuples());        \
-  T GetValue(vtkIdType id) const VTK_EXPECTS(0 <= id && id < GetNumberOfValues());                 \
-  T* GetValueRange(int comp) VTK_SIZEHINT(2);                                                      \
-  T* GetValueRange() VTK_SIZEHINT(2);                                                              \
-  void SetTypedTuple(vtkIdType i, const T* tuple) VTK_EXPECTS(0 <= i && i < GetNumberOfTuples());  \
-  void InsertTypedTuple(vtkIdType i, const T* tuple) VTK_EXPECTS(0 <= i);                          \
-  vtkIdType InsertNextTypedTuple(const T* tuple);                                                  \
-  void SetValue(vtkIdType id, T value) VTK_EXPECTS(0 <= id && id < GetNumberOfValues());           \
-  bool SetNumberOfValues(vtkIdType number) override;                                               \
-  void InsertValue(vtkIdType id, T f) VTK_EXPECTS(0 <= id);                                        \
-  vtkIdType InsertNextValue(T f);                                                                  \
+  vtkCreateWrappedArrayReadInterface(T);                                                           \
+  vtkCreateWrappedArrayWriteInterface(T);                                                          \
   T* WritePointer(vtkIdType id, vtkIdType number);                                                 \
   T* GetPointer(vtkIdType id);                                                                     \
   void SetArray(VTK_ZEROCOPY T* array, vtkIdType size, int save);                                  \
@@ -421,7 +410,16 @@ VTK_ABI_NAMESPACE_END
   VTK_ABI_NAMESPACE_BEGIN                                                                          \
   template class VTKCOMMONCORE_EXPORT vtkAOSDataArrayTemplate<T>;                                  \
   VTK_ABI_NAMESPACE_END
-
+// We only provide these specializations for the 64-bit integer types, since
+// other types can reuse the double-precision mechanism in
+// vtkDataArray::GetRange without losing precision.
+#define VTK_AOS_DATA_ARRAY_TEMPLATE_INSTANTIATE_VALUERANGE(T)                                      \
+  namespace vtkDataArrayPrivate                                                                    \
+  {                                                                                                \
+  VTK_ABI_NAMESPACE_BEGIN                                                                          \
+  VTK_INSTANTIATE_VALUERANGE_ARRAYTYPE(vtkAOSDataArrayTemplate<T>, T);                             \
+  VTK_ABI_NAMESPACE_END                                                                            \
+  }
 #elif defined(VTK_USE_EXTERN_TEMPLATE)
 #ifndef VTK_AOS_DATA_ARRAY_TEMPLATE_EXTERN
 #define VTK_AOS_DATA_ARRAY_TEMPLATE_EXTERN
@@ -439,6 +437,11 @@ namespace vtkDataArrayPrivate
 {
 VTK_ABI_NAMESPACE_BEGIN
 
+// These are instantiated in vtkGenericDataArrayValueRange${i}.cxx
+VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkAOSDataArrayTemplate<long>, long)
+VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkAOSDataArrayTemplate<unsigned long>, unsigned long)
+VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkAOSDataArrayTemplate<long long>, long long)
+VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkAOSDataArrayTemplate<unsigned long long>, unsigned long long)
 // These are instantiated in vtkFloatArray.cxx, vtkDoubleArray.cxx, etc
 VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkAOSDataArrayTemplate<float>, double)
 VTK_DECLARE_VALUERANGE_ARRAYTYPE(vtkAOSDataArrayTemplate<double>, double)
