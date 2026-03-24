@@ -2,10 +2,23 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #import "MyGLKViewController.h"
-#import "vtkIOSRenderWindow.h"
-#import "vtkIOSRenderWindowInteractor.h"
-#include "vtkRenderingOpenGL2ObjectFactory.h"
+#import <QuartzCore/QuartzCore.h>
 
+#include "vtkActor.h"
+#include "vtkCommand.h"
+#include "vtkInteractorStyleMultiTouchCamera.h"
+#include "vtkIOSRenderWindow.h"
+#include "vtkIOSRenderWindowInteractor.h"
+#include "vtkMath.h"
+#include "vtkNew.h"
+#include "vtkObjectFactory.h"
+#include "vtkOpenGLCamera.h"
+#include "vtkOpenGLProperty.h"
+#include "vtkOpenGLRayCastImageDisplayHelper.h"
+#include "vtkOpenGLRenderer.h"
+#include "vtkOpenGLShaderProperty.h"
+#include "vtkOpenGLTexture.h"
+#include "vtkOpenGLUniforms.h"
 #include "vtkParametricBoy.h"
 #include "vtkParametricConicSpiral.h"
 #include "vtkParametricCrossCap.h"
@@ -13,6 +26,8 @@
 #include "vtkParametricEllipsoid.h"
 #include "vtkParametricEnneper.h"
 #include "vtkParametricFigure8Klein.h"
+#include "vtkParametricFunction.h"
+#include "vtkParametricFunctionSource.h"
 #include "vtkParametricKlein.h"
 #include "vtkParametricMobius.h"
 #include "vtkParametricRandomHills.h"
@@ -21,497 +36,462 @@
 #include "vtkParametricSuperEllipsoid.h"
 #include "vtkParametricSuperToroid.h"
 #include "vtkParametricTorus.h"
-#include "vtkSmartPointer.h"
-
-#include "vtkActor.h"
-#include "vtkActor2D.h"
-#include "vtkCamera.h"
-#include "vtkCommand.h"
-#include "vtkInteractorStyleMultiTouchCamera.h"
-#include "vtkMath.h"
-#include "vtkParametricFunctionSource.h"
 #include "vtkPoints.h"
 #include "vtkPolyDataMapper.h"
+#include "vtkProperty.h"
 #include "vtkRenderer.h"
-#include "vtkTextMapper.h"
-#include "vtkTextProperty.h"
+#include "vtkSmartPointer.h"
+#include "vtkTexture.h"
+#include "vtkVersion.h"
 
+#include <algorithm>
 #include <deque>
+#include <vector>
 
 @interface MyGLKViewController ()
 {
-  std::deque<vtkSmartPointer<vtkParametricFunction>> parametricObjects;
+  std::deque<vtkSmartPointer<vtkParametricFunction>> _parametricObjects;
+  std::vector<vtkSmartPointer<vtkRenderer>> _renderers;
+  vtkSmartPointer<vtkIOSRenderWindow> _renderWindowOwner;
+  vtkSmartPointer<vtkIOSRenderWindowInteractor> _interactorOwner;
+  CADisplayLink* _displayLink;
+  CGSize _lastViewportSize;
+  BOOL _appIsActive;
+  BOOL _didAttachWindow;
+  BOOL _didInitInteractor;
 }
 
-@property (strong, nonatomic) EAGLContext* context;
+- (void)attachRenderWindowIfNeeded;
+- (void)ensureInteractorInitialized;
+- (void)updateRenderWindowFrame;
+- (void)renderFrame;
+- (void)startDisplayLinkIfNeeded;
+- (void)stopDisplayLink;
 - (void)tearDownGL;
+- (void)applicationWillResignActive:(NSNotification*)notification;
+- (void)applicationDidBecomeActive:(NSNotification*)notification;
+
 @end
+
+class VTKIOSInlineFactory : public vtkObjectFactory
+{
+public:
+  static VTKIOSInlineFactory* New() { return new VTKIOSInlineFactory(); }
+  vtkTypeMacro(VTKIOSInlineFactory, vtkObjectFactory);
+  const char* GetVTKSourceVersion() VTK_FUTURE_CONST override { return VTK_SOURCE_VERSION; }
+  const char* GetDescription() VTK_FUTURE_CONST override { return "VTK iOS inline factory"; }
+  static vtkObject* CreateOpenGLShaderProperty() { return vtkOpenGLShaderProperty::New(); }
+  static vtkObject* CreateOpenGLUniforms() { return vtkOpenGLUniforms::New(); }
+  static vtkObject* CreateOpenGLCamera() { return vtkOpenGLCamera::New(); }
+  static vtkObject* CreateOpenGLProperty() { return vtkOpenGLProperty::New(); }
+  static vtkObject* CreateOpenGLTexture() { return vtkOpenGLTexture::New(); }
+  static vtkObject* CreateOpenGLRayCastImageDisplayHelper()
+  {
+    return vtkOpenGLRayCastImageDisplayHelper::New();
+  }
+  void RegisterOverridePublic(const char* classOverride, const char* subclass,
+    const char* description, int enableFlag, CreateFunction createFunction,
+    vtkOverrideAttribute* attributes = nullptr)
+  {
+    this->RegisterOverride(classOverride, subclass, description, enableFlag, createFunction,
+      attributes);
+  }
+};
 
 @implementation MyGLKViewController
 
-//----------------------------------------------------------------------------
 - (vtkIOSRenderWindow*)getVTKRenderWindow
 {
   return _myVTKRenderWindow;
 }
 
-//----------------------------------------------------------------------------
 - (void)setVTKRenderWindow:(vtkIOSRenderWindow*)theVTKRenderWindow
 {
   _myVTKRenderWindow = theVTKRenderWindow;
 }
 
-//----------------------------------------------------------------------------
 - (vtkIOSRenderWindowInteractor*)getInteractor
 {
-  if (_myVTKRenderWindow)
-  {
-    return (vtkIOSRenderWindowInteractor*)_myVTKRenderWindow->GetInteractor();
-  }
-  else
-  {
-    return NULL;
-  }
+  return _interactorOwner;
 }
 
 - (void)initializeParametricObjects
 {
-  parametricObjects.push_back(vtkSmartPointer<vtkParametricBoy>::New());
-  parametricObjects.push_back(vtkSmartPointer<vtkParametricConicSpiral>::New());
-  parametricObjects.push_back(vtkSmartPointer<vtkParametricCrossCap>::New());
-  parametricObjects.push_back(vtkSmartPointer<vtkParametricDini>::New());
+  _parametricObjects.clear();
+  _parametricObjects.push_back(vtkSmartPointer<vtkParametricBoy>::New());
+  _parametricObjects.push_back(vtkSmartPointer<vtkParametricConicSpiral>::New());
+  _parametricObjects.push_back(vtkSmartPointer<vtkParametricCrossCap>::New());
+  _parametricObjects.push_back(vtkSmartPointer<vtkParametricDini>::New());
 
   auto ellipsoid = vtkSmartPointer<vtkParametricEllipsoid>::New();
   ellipsoid->SetXRadius(0.5);
   ellipsoid->SetYRadius(2.0);
-  parametricObjects.push_back(ellipsoid);
+  _parametricObjects.push_back(ellipsoid);
 
-  parametricObjects.push_back(vtkSmartPointer<vtkParametricEnneper>::New());
-  parametricObjects.push_back(vtkSmartPointer<vtkParametricFigure8Klein>::New());
-  parametricObjects.push_back(vtkSmartPointer<vtkParametricKlein>::New());
+  _parametricObjects.push_back(vtkSmartPointer<vtkParametricEnneper>::New());
+  _parametricObjects.push_back(vtkSmartPointer<vtkParametricFigure8Klein>::New());
+  _parametricObjects.push_back(vtkSmartPointer<vtkParametricKlein>::New());
+
   auto mobius = vtkSmartPointer<vtkParametricMobius>::New();
   mobius->SetRadius(2.0);
   mobius->SetMinimumV(-0.5);
   mobius->SetMaximumV(0.5);
-  parametricObjects.push_back(mobius);
+  _parametricObjects.push_back(mobius);
 
-  vtkSmartPointer<vtkParametricRandomHills> randomHills =
-    vtkSmartPointer<vtkParametricRandomHills>::New();
+  auto randomHills = vtkSmartPointer<vtkParametricRandomHills>::New();
   randomHills->AllowRandomGenerationOff();
-  parametricObjects.push_back(randomHills);
+  _parametricObjects.push_back(randomHills);
 
-  parametricObjects.push_back(vtkSmartPointer<vtkParametricRoman>::New());
+  _parametricObjects.push_back(vtkSmartPointer<vtkParametricRoman>::New());
 
   auto superEllipsoid = vtkSmartPointer<vtkParametricSuperEllipsoid>::New();
   superEllipsoid->SetN1(0.5);
   superEllipsoid->SetN2(0.1);
-  parametricObjects.push_back(superEllipsoid);
+  _parametricObjects.push_back(superEllipsoid);
 
   auto superToroid = vtkSmartPointer<vtkParametricSuperToroid>::New();
   superToroid->SetN1(0.2);
   superToroid->SetN2(3.0);
-  parametricObjects.push_back(superToroid);
+  _parametricObjects.push_back(superToroid);
 
-  parametricObjects.push_back(vtkSmartPointer<vtkParametricTorus>::New());
+  _parametricObjects.push_back(vtkSmartPointer<vtkParametricTorus>::New());
 
-  // The spline needs points
-  vtkSmartPointer<vtkParametricSpline> spline = vtkSmartPointer<vtkParametricSpline>::New();
-  vtkSmartPointer<vtkPoints> inputPoints = vtkSmartPointer<vtkPoints>::New();
+  auto spline = vtkSmartPointer<vtkParametricSpline>::New();
+  auto inputPoints = vtkSmartPointer<vtkPoints>::New();
   vtkMath::RandomSeed(8775070);
-  for (int p = 0; p < 10; p++)
+  for (int p = 0; p < 10; ++p)
   {
-    double x = vtkMath::Random(0.0, 1.0);
-    double y = vtkMath::Random(0.0, 1.0);
-    double z = vtkMath::Random(0.0, 1.0);
-    inputPoints->InsertNextPoint(x, y, z);
+    inputPoints->InsertNextPoint(
+      vtkMath::Random(0.0, 1.0), vtkMath::Random(0.0, 1.0), vtkMath::Random(0.0, 1.0));
   }
   spline->SetPoints(inputPoints);
-  parametricObjects.push_back(spline);
+  _parametricObjects.push_back(spline);
 }
 
 - (void)setupPipeline
 {
-  // Register GL2 objects
-  vtkObjectFactory::RegisterFactory(vtkRenderingOpenGL2ObjectFactory::New());
+  static bool didRegisterOverrides = false;
+  if (!didRegisterOverrides)
+  {
+    VTKIOSInlineFactory* factory = VTKIOSInlineFactory::New();
+    if (factory)
+    {
+      factory->RegisterOverridePublic("vtkShaderProperty", "vtkOpenGLShaderProperty",
+        "OpenGL shader property override", 1, VTKIOSInlineFactory::CreateOpenGLShaderProperty);
+      factory->RegisterOverridePublic("vtkUniforms", "vtkOpenGLUniforms",
+        "OpenGL uniforms override", 1, VTKIOSInlineFactory::CreateOpenGLUniforms);
+      factory->RegisterOverridePublic(
+        "vtkCamera", "vtkOpenGLCamera", "OpenGL camera override", 1,
+        VTKIOSInlineFactory::CreateOpenGLCamera);
+      factory->RegisterOverridePublic(
+        "vtkProperty", "vtkOpenGLProperty", "OpenGL property override", 1,
+        VTKIOSInlineFactory::CreateOpenGLProperty);
+      factory->RegisterOverridePublic(
+        "vtkTexture", "vtkOpenGLTexture", "OpenGL texture override", 1,
+        VTKIOSInlineFactory::CreateOpenGLTexture);
+      factory->RegisterOverridePublic("vtkRayCastImageDisplayHelper",
+        "vtkOpenGLRayCastImageDisplayHelper", "OpenGL ray cast image display helper override", 1,
+        VTKIOSInlineFactory::CreateOpenGLRayCastImageDisplayHelper);
+      vtkObjectFactory::RegisterFactory(factory);
+      factory->Delete();
+    }
+    didRegisterOverrides = true;
+  }
 
-  //
-  // Create the parametric objects
-  //
   [self initializeParametricObjects];
 
-  std::vector<vtkSmartPointer<vtkParametricFunctionSource>> parametricFunctionSources;
-  std::vector<vtkSmartPointer<vtkRenderer>> renderers;
+  _renderers.clear();
+  std::vector<vtkSmartPointer<vtkParametricFunctionSource>> sources;
   std::vector<vtkSmartPointer<vtkPolyDataMapper>> mappers;
   std::vector<vtkSmartPointer<vtkActor>> actors;
 
-  // No text mappers/actors in VTK GL2 yet
-#if 0
-  //std::vector<vtkSmartPointer<vtkTextMapper> > textmappers;
-  //std::vector<vtkSmartPointer<vtkActor2D> > textactors;
-
-  // Create one text property for all
-  //vtkSmartPointer<vtkTextProperty> textProperty =
-  //vtkSmartPointer<vtkTextProperty>::New();
-  //textProperty->SetFontSize(10);
-  //textProperty->SetJustificationToCentered();
-#endif
-
-  // Create a parametric function source, renderer, mapper, and actor
-  // for each object
-  for (unsigned int i = 0; i < parametricObjects.size(); i++)
+  for (size_t i = 0; i < _parametricObjects.size(); ++i)
   {
-    parametricFunctionSources.push_back(vtkSmartPointer<vtkParametricFunctionSource>::New());
-    parametricFunctionSources[i]->SetParametricFunction(parametricObjects[i]);
-    parametricFunctionSources[i]->Update();
+    sources.push_back(vtkSmartPointer<vtkParametricFunctionSource>::New());
+    sources[i]->SetParametricFunction(_parametricObjects[i]);
+    sources[i]->Update();
 
-    auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-    assert(mapper);
-    mappers.push_back(mapper);
-    mappers[i]->SetInputConnection(parametricFunctionSources[i]->GetOutputPort());
+    mappers.push_back(vtkSmartPointer<vtkPolyDataMapper>::New());
+    mappers[i]->SetInputConnection(sources[i]->GetOutputPort());
 
     actors.push_back(vtkSmartPointer<vtkActor>::New());
     actors[i]->SetMapper(mappers[i]);
 
-    // No text mappers/actors in VTK GL2 yet
-#if 0
-    textmappers.push_back(vtkSmartPointer<vtkTextMapper>::New());
-    textmappers[i]->SetInput(parametricObjects[i]->GetClassName());
-    textmappers[i]->SetTextProperty(textProperty);
-
-    textactors.push_back(vtkSmartPointer<vtkActor2D>::New());
-    textactors[i]->SetMapper(textmappers[i]);
-    textactors[i]->SetPosition(100, 16);
-#endif
-    renderers.push_back(vtkSmartPointer<vtkRenderer>::New());
-  }
-  unsigned int gridDimensions = 4;
-
-  // Need a renderer even if there is no actor
-  for (size_t i = parametricObjects.size(); i < gridDimensions * gridDimensions; i++)
-  {
-    renderers.push_back(vtkSmartPointer<vtkRenderer>::New());
+    _renderers.push_back(vtkSmartPointer<vtkRenderer>::New());
   }
 
-  vtkIOSRenderWindow* renWin = vtkIOSRenderWindow::New();
-  // renWin->DebugOn();
-  [self setVTKRenderWindow:renWin];
-
-  int rendererSize = 200;
-  renWin->SetSize(rendererSize * gridDimensions, rendererSize * gridDimensions);
-
-  for (int row = 0; row < static_cast<int>(gridDimensions); row++)
+  const unsigned int gridDimensions = 4;
+  for (size_t i = _parametricObjects.size(); i < gridDimensions * gridDimensions; ++i)
   {
-    for (int col = 0; col < static_cast<int>(gridDimensions); col++)
+    _renderers.push_back(vtkSmartPointer<vtkRenderer>::New());
+  }
+
+  _renderWindowOwner = vtkSmartPointer<vtkIOSRenderWindow>::New();
+  vtkIOSRenderWindow* renderWindow = _renderWindowOwner.GetPointer();
+  renderWindow->SetMultiSamples(0);
+  renderWindow->SetStencilCapable(0);
+  renderWindow->SetAlphaBitPlanes(0);
+  [self setVTKRenderWindow:renderWindow];
+
+  _interactorOwner = vtkSmartPointer<vtkIOSRenderWindowInteractor>::New();
+  _interactorOwner->SetRenderWindow(renderWindow);
+  _interactorOwner->SetUseGestureRecognizers(1);
+  vtkNew<vtkInteractorStyleMultiTouchCamera> style;
+  _interactorOwner->SetInteractorStyle(style.GetPointer());
+
+  const int rendererSize = 200;
+  renderWindow->SetSize(rendererSize * gridDimensions, rendererSize * gridDimensions);
+
+  for (int row = 0; row < static_cast<int>(gridDimensions); ++row)
+  {
+    for (int col = 0; col < static_cast<int>(gridDimensions); ++col)
     {
       int index = row * gridDimensions + col;
-
-      // (xmin, ymin, xmax, ymax)
       double viewport[4] = {
-        static_cast<double>(col) * rendererSize / (gridDimensions * rendererSize),
-        static_cast<double>(gridDimensions - (row + 1)) * rendererSize /
-          (gridDimensions * rendererSize),
-        static_cast<double>(col + 1) * rendererSize / (gridDimensions * rendererSize),
-        static_cast<double>(gridDimensions - row) * rendererSize / (gridDimensions * rendererSize)
+        static_cast<double>(col) / gridDimensions,
+        static_cast<double>(gridDimensions - (row + 1)) / gridDimensions,
+        static_cast<double>(col + 1) / gridDimensions,
+        static_cast<double>(gridDimensions - row) / gridDimensions
       };
 
-      renWin->AddRenderer(renderers[index]);
-      renderers[index]->SetViewport(viewport);
-      if (index > static_cast<int>(parametricObjects.size() - 1))
+      renderWindow->AddRenderer(_renderers[index]);
+      _renderers[index]->SetViewport(viewport);
+      _renderers[index]->SetBackground(.2, .3, .4);
+
+      if (index >= static_cast<int>(_parametricObjects.size()))
       {
         continue;
       }
-      renderers[index]->AddActor(actors[index]);
-      // renderers[index]->AddActor(textactors[index]);
-      renderers[index]->SetBackground(.2, .3, .4);
-      renderers[index]->ResetCamera();
-      renderers[index]->GetActiveCamera()->Azimuth(30);
-      renderers[index]->GetActiveCamera()->Elevation(-30);
-      renderers[index]->GetActiveCamera()->Zoom(0.9);
-      renderers[index]->ResetCameraClippingRange();
+
+      _renderers[index]->AddActor(actors[index]);
+      _renderers[index]->ResetCamera();
+      _renderers[index]->GetActiveCamera()->Azimuth(30);
+      _renderers[index]->GetActiveCamera()->Elevation(-30);
+      _renderers[index]->GetActiveCamera()->Zoom(0.9);
+      _renderers[index]->ResetCameraClippingRange();
     }
   }
-
-  // this example uses VTK's built in interaction but you could choose
-  // to use your own instead.
-  vtkRenderWindowInteractor* iren = vtkRenderWindowInteractor::New();
-  iren->SetRenderWindow(renWin);
-
-  vtkInteractorStyleMultiTouchCamera* ismt = vtkInteractorStyleMultiTouchCamera::New();
-  iren->SetInteractorStyle(ismt);
-  ismt->Delete();
-  iren->Start();
 }
 
 - (void)viewDidLoad
 {
   [super viewDidLoad];
 
-  self.context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+  _appIsActive = ([UIApplication sharedApplication].applicationState == UIApplicationStateActive);
+  self.view.backgroundColor = [UIColor blackColor];
 
-  if (!self.context)
+  UIView* container = self.vtkContainerView ?: self.view;
+  container.multipleTouchEnabled = YES;
+
+  if (self.vtkContainerView && self.vtkContainerView.superview == self.view)
   {
-    NSLog(@"Failed to create ES context");
+    self.vtkContainerView.translatesAutoresizingMaskIntoConstraints = NO;
+    [NSLayoutConstraint activateConstraints:@[
+      [self.vtkContainerView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+      [self.vtkContainerView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+      [self.vtkContainerView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+      [self.vtkContainerView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+    ]];
   }
 
-  GLKView* view = (GLKView*)self.view;
-  view.context = self.context;
-  view.drawableDepthFormat = GLKViewDrawableDepthFormat24;
-  // view.drawableMultisample = GLKViewDrawableMultisample4X;
-
-  // setup the vis pipeline
   [self setupPipeline];
 
-  [EAGLContext setCurrentContext:self.context];
-  [self resizeView];
-  [self getVTKRenderWindow]->Render();
+  NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+  [center addObserver:self
+             selector:@selector(applicationWillResignActive:)
+                 name:UIApplicationWillResignActiveNotification
+               object:nil];
+  [center addObserver:self
+             selector:@selector(applicationDidBecomeActive:)
+                 name:UIApplicationDidBecomeActiveNotification
+               object:nil];
 }
 
-- (void)dealloc
+- (void)viewDidAppear:(BOOL)animated
 {
-  [self tearDownGL];
+  [super viewDidAppear:animated];
+  [self attachRenderWindowIfNeeded];
+  [self ensureInteractorInitialized];
+  [self updateRenderWindowFrame];
+  [self renderFrame];
+  [self startDisplayLinkIfNeeded];
+}
 
-  if ([EAGLContext currentContext] == self.context)
+- (void)viewWillDisappear:(BOOL)animated
+{
+  [super viewWillDisappear:animated];
+  [self stopDisplayLink];
+}
+
+- (void)viewDidLayoutSubviews
+{
+  [super viewDidLayoutSubviews];
+  [self updateRenderWindowFrame];
+}
+
+- (void)viewWillTransitionToSize:(CGSize)size
+       withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator
+{
+  [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
+  (void)size;
+
+  __weak typeof(self) weakSelf = self;
+  [coordinator animateAlongsideTransition:nil
+                               completion:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+                                 MyGLKViewController* strongSelf = weakSelf;
+                                 if (!strongSelf)
+                                 {
+                                   return;
+                                 }
+                                 [strongSelf.view layoutIfNeeded];
+                                 [strongSelf updateRenderWindowFrame];
+                                 [strongSelf renderFrame];
+                               }];
+}
+
+- (void)attachRenderWindowIfNeeded
+{
+  if (_didAttachWindow || ![self getVTKRenderWindow])
   {
-    [EAGLContext setCurrentContext:nil];
+    return;
+  }
+
+  UIView* container = self.vtkContainerView ?: self.view;
+  if (!container)
+  {
+    return;
+  }
+
+  UIScreen* screen = nil;
+  if (@available(iOS 13.0, *))
+  {
+    screen = container.window.windowScene.screen;
+  }
+  if (!screen)
+  {
+    screen = container.window.screen ?: self.view.window.screen;
+  }
+
+  CGFloat screenScale = screen ? screen.scale : self.view.traitCollection.displayScale;
+  container.contentScaleFactor = screenScale;
+  container.layer.contentsScale = screenScale;
+  [self getVTKRenderWindow]->SetParentId((__bridge void*)container);
+  [self updateRenderWindowFrame];
+  [self getVTKRenderWindow]->Initialize();
+  [self updateRenderWindowFrame];
+  _didAttachWindow = YES;
+}
+
+- (void)ensureInteractorInitialized
+{
+  if (_didInitInteractor || !_interactorOwner)
+  {
+    return;
+  }
+
+  _interactorOwner->Initialize();
+  _interactorOwner->Enable();
+  _didInitInteractor = YES;
+}
+
+- (void)updateRenderWindowFrame
+{
+  if (![self getVTKRenderWindow])
+  {
+    return;
+  }
+
+  UIView* container = self.vtkContainerView ?: self.view;
+  if (!container || CGRectIsEmpty(container.bounds))
+  {
+    return;
+  }
+
+  if (container.window)
+  {
+    container.contentScaleFactor = container.window.screen.scale;
+    container.layer.contentsScale = container.contentScaleFactor;
+  }
+
+  int width = (int)lround(container.bounds.size.width * container.contentScaleFactor);
+  int height = (int)lround(container.bounds.size.height * container.contentScaleFactor);
+
+  [self getVTKRenderWindow]->SetPosition(0, 0);
+  [self getVTKRenderWindow]->SetSize(width, height);
+  if (_interactorOwner)
+  {
+    _interactorOwner->SetSize(width, height);
+  }
+
+  _lastViewportSize = CGSizeMake(width, height);
+  (void)[self getVTKRenderWindow]->GetWindowId();
+}
+
+- (void)renderFrame
+{
+  if (!_appIsActive || !self.isViewLoaded || !self.view.window)
+  {
+    return;
+  }
+
+  [self attachRenderWindowIfNeeded];
+  [self ensureInteractorInitialized];
+  [self updateRenderWindowFrame];
+  if ([self getVTKRenderWindow])
+  {
+    [self getVTKRenderWindow]->Render();
   }
 }
 
-- (void)didReceiveMemoryWarning
+- (void)startDisplayLinkIfNeeded
 {
-  [super didReceiveMemoryWarning];
-
-  if ([self isViewLoaded] && ([[self view] window] == nil))
+  if (_displayLink || !_appIsActive || !self.isViewLoaded || !self.view.window)
   {
-    self.view = nil;
-
-    [self tearDownGL];
-
-    if ([EAGLContext currentContext] == self.context)
-    {
-      [EAGLContext setCurrentContext:nil];
-    }
-    self.context = nil;
+    return;
   }
 
-  // Dispose of any resources that can be recreated.
+  _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(renderFrame)];
+  [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopDisplayLink
+{
+  [_displayLink invalidate];
+  _displayLink = nil;
+}
+
+- (void)applicationWillResignActive:(NSNotification*)notification
+{
+  (void)notification;
+  _appIsActive = NO;
+  [self stopDisplayLink];
+}
+
+- (void)applicationDidBecomeActive:(NSNotification*)notification
+{
+  (void)notification;
+  _appIsActive = YES;
+  [self renderFrame];
+  [self startDisplayLinkIfNeeded];
 }
 
 - (void)tearDownGL
 {
-  [EAGLContext setCurrentContext:self.context];
-
-  // free GL resources
-  // ...
+  _didInitInteractor = NO;
+  _didAttachWindow = NO;
+  _lastViewportSize = CGSizeZero;
+  _parametricObjects.clear();
+  _renderers.clear();
+  _interactorOwner = nullptr;
+  _renderWindowOwner = nullptr;
+  [self setVTKRenderWindow:nullptr];
 }
 
-- (void)resizeView
+- (void)dealloc
 {
-  double scale = self.view.contentScaleFactor;
-  double newWidth = scale * self.view.bounds.size.width;
-  double newHeight = scale * self.view.bounds.size.height;
-  [self getVTKRenderWindow]->SetSize(newWidth, newHeight);
-}
-
-- (void)viewWillLayoutSubviews
-{
-  [self resizeView];
-}
-
-- (void)glkView:(GLKView*)view drawInRect:(CGRect)rect
-{
-  // std::cout << [self getVTKRenderWindow]->ReportCapabilities() << std::endl;
-  [self getVTKRenderWindow]->Render();
-}
-
-//=================================================================
-// this example uses VTK's built in interaction but you could choose
-// to use your own instead. The remaining methods forward touch events
-// to VTKs interactor.
-
-// Handles the start of a touch
-- (void)touchesBegan:(NSSet*)touches withEvent:(UIEvent*)event
-{
-  vtkIOSRenderWindowInteractor* interactor = [self getInteractor];
-  if (!interactor)
-  {
-    return;
-  }
-
-  vtkIOSRenderWindow* renWin = [self getVTKRenderWindow];
-  if (!renWin)
-  {
-    return;
-  }
-
-  CGRect bounds = [self.view bounds];
-  double scale = self.view.contentScaleFactor;
-
-  // set the position for all contacts
-  NSSet* myTouches = [event touchesForView:self.view];
-  for (UITouch* touch in myTouches)
-  {
-    // Convert touch point from UIView referential to OpenGL one (upside-down flip)
-    CGPoint location = [touch locationInView:self.view];
-    location.y = bounds.size.height - location.y;
-
-    // Account for the content scaling factor
-    location.x *= scale;
-    location.y *= scale;
-
-    int index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    if (index < VTKI_MAX_POINTERS)
-    {
-      interactor->SetEventInformation(
-        (int)round(location.x), (int)round(location.y), 0, 0, 0, 0, 0, index);
-    }
-  }
-
-  // handle begin events
-  for (UITouch* touch in touches)
-  {
-    int index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    interactor->SetPointerIndex(index);
-    interactor->InvokeEvent(vtkCommand::LeftButtonPressEvent, NULL);
-    // NSLog(@"Starting left mouse");
-  }
-
-  // Display the buffer
-  [(GLKView*)self.view display];
-}
-
-// Handles the continuation of a touch.
-- (void)touchesMoved:(NSSet*)touches withEvent:(UIEvent*)event
-{
-  vtkIOSRenderWindowInteractor* interactor = [self getInteractor];
-  if (!interactor)
-  {
-    return;
-  }
-
-  vtkIOSRenderWindow* renWin = [self getVTKRenderWindow];
-  if (!renWin)
-  {
-    return;
-  }
-
-  CGRect bounds = [self.view bounds];
-  double scale = self.view.contentScaleFactor;
-
-  // set the position for all contacts
-  int index;
-  NSSet* myTouches = [event touchesForView:self.view];
-  for (UITouch* touch in myTouches)
-  {
-    // Convert touch point from UIView referential to OpenGL one (upside-down flip)
-    CGPoint location = [touch locationInView:self.view];
-    location.y = bounds.size.height - location.y;
-
-    // Account for the content scaling factor
-    location.x *= scale;
-    location.y *= scale;
-
-    index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    if (index < VTKI_MAX_POINTERS)
-    {
-      interactor->SetEventInformation(
-        (int)round(location.x), (int)round(location.y), 0, 0, 0, 0, 0, index);
-    }
-  }
-
-  // fire move event on last index
-  interactor->SetPointerIndex(index);
-  interactor->InvokeEvent(vtkCommand::MouseMoveEvent, NULL);
-  //  NSLog(@"Moved left mouse");
-
-  // Display the buffer
-  [(GLKView*)self.view display];
-}
-
-// Handles the end of a touch event when the touch is a tap.
-- (void)touchesEnded:(NSSet*)touches withEvent:(UIEvent*)event
-{
-  vtkIOSRenderWindowInteractor* interactor = [self getInteractor];
-  if (!interactor)
-  {
-    return;
-  }
-
-  vtkIOSRenderWindow* renWin = [self getVTKRenderWindow];
-  if (!renWin)
-  {
-    return;
-  }
-
-  CGRect bounds = [self.view bounds];
-  double scale = self.view.contentScaleFactor;
-
-  // set the position for all contacts
-  NSSet* myTouches = [event touchesForView:self.view];
-  for (UITouch* touch in myTouches)
-  {
-    // Convert touch point from UIView referential to OpenGL one (upside-down flip)
-    CGPoint location = [touch locationInView:self.view];
-    location.y = bounds.size.height - location.y;
-
-    // Account for the content scaling factor
-    location.x *= scale;
-    location.y *= scale;
-
-    int index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    if (index < VTKI_MAX_POINTERS)
-    {
-      interactor->SetEventInformation(
-        (int)round(location.x), (int)round(location.y), 0, 0, 0, 0, 0, index);
-    }
-  }
-
-  // handle begin events
-  for (UITouch* touch in touches)
-  {
-    int index = interactor->GetPointerIndexForContact((size_t)(__bridge void*)touch);
-    interactor->SetPointerIndex(index);
-    interactor->InvokeEvent(vtkCommand::LeftButtonReleaseEvent, NULL);
-    interactor->ClearContact((size_t)(__bridge void*)touch);
-    // NSLog(@"lifting left mouse");
-  }
-
-  // Display the buffer
-  [(GLKView*)self.view display];
-}
-
-// Handles the end of a touch event.
-- (void)touchesCancelled:(NSSet*)touches withEvent:(UIEvent*)event
-{
-  vtkIOSRenderWindowInteractor* interactor = [self getInteractor];
-  if (!interactor)
-  {
-    return;
-  }
-
-  vtkIOSRenderWindow* renWin = [self getVTKRenderWindow];
-  if (!renWin)
-  {
-    return;
-  }
-
-  CGRect bounds = [self.view bounds];
-  double scale = self.view.contentScaleFactor;
-
-  UITouch* touch = [[event touchesForView:self.view] anyObject];
-  // Convert touch point from UIView referential to OpenGL one (upside-down flip)
-  CGPoint location = [touch locationInView:self.view];
-  location.y = bounds.size.height - location.y;
-
-  // Account for the content scaling factor
-  location.x *= scale;
-  location.y *= scale;
-
-  interactor->SetEventInformation((int)round(location.x), (int)round(location.y), 0, 0, 0, 0);
-  interactor->InvokeEvent(vtkCommand::LeftButtonReleaseEvent, NULL);
-  // NSLog(@"Ended left mouse");
-
-  // Display the buffer
-  [(GLKView*)self.view display];
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+  [self stopDisplayLink];
+  [self tearDownGL];
 }
 
 @end

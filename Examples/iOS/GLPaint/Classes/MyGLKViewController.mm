@@ -9,7 +9,7 @@
 #include "vtkCommand.h"
 #include "vtkConeSource.h"
 #include "vtkGlyph3D.h"
-#include "vtkInteractorStyleTrackballCamera.h"
+#include "vtkInteractorStyleMultiTouchCamera.h"
 #include "vtkIOSRenderWindow.h"
 #include "vtkIOSRenderWindowInteractor.h"
 #include "vtkNew.h"
@@ -39,21 +39,17 @@
   vtkSmartPointer<vtkIOSRenderWindowInteractor> _interactorOwner;
   vtkSmartPointer<vtkOpenGLRenderer> _renderer;
   CADisplayLink* _displayLink;
-  UIPinchGestureRecognizer* _pinchRecognizer;
-  CGFloat _lastPinchScale;
   CGSize _lastViewportSize;
   BOOL _appIsActive;
   BOOL _didAttachWindow;
   BOOL _didFrameInitialCamera;
   BOOL _didInitInteractor;
-  BOOL _leftButtonDown;
 }
 
 - (void)attachRenderWindowIfNeeded;
 - (void)ensureInteractorInitialized;
 - (void)updateRenderWindowFrame;
 - (void)renderFrame;
-- (void)handlePinch:(UIPinchGestureRecognizer*)recognizer;
 - (void)startDisplayLinkIfNeeded;
 - (void)stopDisplayLink;
 - (void)tearDownGL;
@@ -147,7 +143,8 @@ public:
 
   _interactorOwner = vtkSmartPointer<vtkIOSRenderWindowInteractor>::New();
   _interactorOwner->SetRenderWindow(renderWindow);
-  vtkNew<vtkInteractorStyleTrackballCamera> style;
+  _interactorOwner->SetUseGestureRecognizers(1);
+  vtkNew<vtkInteractorStyleMultiTouchCamera> style;
   _interactorOwner->SetInteractorStyle(style.GetPointer());
 
   _renderer = vtkSmartPointer<vtkOpenGLRenderer>::New();
@@ -209,15 +206,6 @@ public:
   }
 
   [self setupPipeline];
-
-  if (!_pinchRecognizer)
-  {
-    _pinchRecognizer =
-      [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(handlePinch:)];
-    _pinchRecognizer.cancelsTouchesInView = YES;
-    _lastPinchScale = 1.0;
-    [container addGestureRecognizer:_pinchRecognizer];
-  }
 
   if (self.coneSizeSlider)
   {
@@ -449,56 +437,8 @@ public:
   [self renderFrame];
 }
 
-- (void)handlePinch:(UIPinchGestureRecognizer*)recognizer
-{
-  if (!_renderer || ![self getVTKRenderWindow])
-  {
-    return;
-  }
-
-  vtkCamera* camera = _renderer->GetActiveCamera();
-  if (!camera)
-  {
-    return;
-  }
-
-  if (recognizer.state == UIGestureRecognizerStateBegan)
-  {
-    _lastPinchScale = recognizer.scale;
-    return;
-  }
-
-  if (recognizer.state == UIGestureRecognizerStateChanged)
-  {
-    CGFloat delta = recognizer.scale / _lastPinchScale;
-    if (delta > 0.0)
-    {
-      if (camera->GetParallelProjection())
-      {
-        camera->SetParallelScale(camera->GetParallelScale() / delta);
-      }
-      else
-      {
-        camera->Dolly(delta);
-        _renderer->ResetCameraClippingRange();
-      }
-      [self renderFrame];
-    }
-    _lastPinchScale = recognizer.scale;
-    return;
-  }
-
-  if (recognizer.state == UIGestureRecognizerStateEnded ||
-    recognizer.state == UIGestureRecognizerStateCancelled ||
-    recognizer.state == UIGestureRecognizerStateFailed)
-  {
-    _lastPinchScale = 1.0;
-  }
-}
-
 - (void)tearDownGL
 {
-  _leftButtonDown = NO;
   _didInitInteractor = NO;
   _didAttachWindow = NO;
   _didFrameInitialCamera = NO;
@@ -515,68 +455,6 @@ public:
   [[NSNotificationCenter defaultCenter] removeObserver:self];
   [self stopDisplayLink];
   [self tearDownGL];
-}
-
-- (void)sendVTKEvent:(unsigned long)event forTouch:(UITouch*)touch
-{
-  UIView* container = self.vtkContainerView ?: self.view;
-  if (!touch || !container || !_interactorOwner)
-  {
-    return;
-  }
-
-  [self ensureInteractorInitialized];
-  CGPoint location = [touch locationInView:container];
-  int x = (int)lround(location.x * container.contentScaleFactor);
-  int y = (int)lround(location.y * container.contentScaleFactor);
-  _interactorOwner->SetEventInformationFlipY(x, y, 0, 0, 0, 0, nullptr);
-  _interactorOwner->InvokeEvent(event, nullptr);
-}
-
-- (void)touchesBegan:(NSSet*)touches withEvent:(UIEvent*)event
-{
-  (void)event;
-  UITouch* touch = [touches anyObject];
-  if (!touch || [touches count] != 1)
-  {
-    return;
-  }
-
-  [self sendVTKEvent:vtkCommand::LeftButtonPressEvent forTouch:touch];
-  _leftButtonDown = YES;
-  [self renderFrame];
-}
-
-- (void)touchesMoved:(NSSet*)touches withEvent:(UIEvent*)event
-{
-  (void)event;
-  UITouch* touch = [touches anyObject];
-  if (!_leftButtonDown || !touch)
-  {
-    return;
-  }
-
-  [self sendVTKEvent:vtkCommand::MouseMoveEvent forTouch:touch];
-  [self renderFrame];
-}
-
-- (void)touchesEnded:(NSSet*)touches withEvent:(UIEvent*)event
-{
-  (void)event;
-  UITouch* touch = [touches anyObject];
-  if (!_leftButtonDown || !touch)
-  {
-    return;
-  }
-
-  [self sendVTKEvent:vtkCommand::LeftButtonReleaseEvent forTouch:touch];
-  _leftButtonDown = NO;
-  [self renderFrame];
-}
-
-- (void)touchesCancelled:(NSSet*)touches withEvent:(UIEvent*)event
-{
-  [self touchesEnded:touches withEvent:event];
 }
 
 @end

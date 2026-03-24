@@ -75,6 +75,21 @@ public:
    */
   void ExitCallback() override;
 
+  /**
+   * Enable UIKit gesture recognizers on the iOS render view so camera
+   * interaction can be shared across example applications.
+   */
+  vtkSetMacro(UseGestureRecognizers, vtkTypeBool);
+  vtkGetMacro(UseGestureRecognizers, vtkTypeBool);
+  vtkBooleanMacro(UseGestureRecognizers, vtkTypeBool);
+
+  vtkSetClampMacro(GesturePanMinimumTouches, int, 1, 2);
+  vtkGetMacro(GesturePanMinimumTouches, int);
+
+  vtkSetMacro(UseMouseWheelPinch, vtkTypeBool);
+  vtkGetMacro(UseMouseWheelPinch, vtkTypeBool);
+  vtkBooleanMacro(UseMouseWheelPinch, vtkTypeBool);
+
   //  int GetButtonDown();
   //  void SetButtonDown(int button);
 
@@ -123,7 +138,13 @@ protected:
    */
   void SetIOSManager(void* manager);
   void* GetIOSManager();
+  void InstallGestureRecognizers();
+  void RemoveGestureRecognizers();
   ///@}
+
+  vtkTypeBool UseGestureRecognizers;
+  int GesturePanMinimumTouches;
+  vtkTypeBool UseMouseWheelPinch;
 
 private:
   vtkIOSRenderWindowInteractor(const vtkIOSRenderWindowInteractor&) = delete;

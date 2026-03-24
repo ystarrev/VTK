@@ -65,16 +65,15 @@
   }
 }
 
-- (void)documentMenu:(UIDocumentMenuViewController*)documentMenu
-  didPickDocumentPicker:(UIDocumentPickerViewController*)documentPicker
+- (void)documentPicker:(UIDocumentPickerViewController*)controller
+didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls
 {
-  // documentPicker.delegate = self;
-  // documentPicker.modalPresentationStyle = UIModalPresentationFormSheet;
-  // [self presentViewController:documentPicker animated:YES completion:nil];
-}
+  NSURL* url = [urls firstObject];
+  if (!url)
+  {
+    return;
+  }
 
-- (void)documentPicker:(UIDocumentPickerViewController*)controller didPickDocumentAtURL:(NSURL*)url
-{
   if (controller.documentPickerMode == UIDocumentPickerModeImport)
   {
     NSString* alertMessage =

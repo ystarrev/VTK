@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen
 // SPDX-License-Identifier: BSD-3-Clause
 
-#import <GLKit/GLKit.h>
 #import <UIKit/UIKit.h>
 
 // Forward declarations
@@ -12,11 +11,13 @@ class vtkPlaneWidget;
 class vtkPolyDataMapper;
 class vtkProbeFilter;
 class vtkTPWCallback;
+class vtkIOSRenderWindowInteractor;
 
-@interface VTKViewController : GLKViewController
+@interface VTKViewController : UIViewController
 {
 @private
   vtkIOSRenderWindow* RenderWindow;
+  vtkIOSRenderWindowInteractor* Interactor;
   vtkPlaneWidget* PlaneWidget;
   vtkRenderer* Renderer;
   vtkProbeFilter* Probe;

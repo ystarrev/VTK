@@ -16,21 +16,27 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
 
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplicationLaunchOptionsKey: Any]?) -> Bool {
-        // Hide status bar for App
-        application.isStatusBarHidden = true
-
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Check if any example data can be downloaded
         ExampleDataManager.downloadExampleData()
 
         return true
     }
 
-    func application(_ app: UIApplication, open url: URL, options: [UIApplicationOpenURLOptionsKey : Any] = [:]) -> Bool {
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
         // Application is already launched and a compatible file has been selected
         openFile(at: url)
 
-        return true;
+        return true
+    }
+
+    func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: "Default Configuration",
+                                                 sessionRole: connectingSceneSession.role)
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
@@ -56,10 +62,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func openFile(at url:URL) {
-        let mainViewController = window?.rootViewController as? VTKViewController
+        let mainViewController = activeVTKViewController()
 
         let fileExists = FileManager.default.fileExists(atPath: url.path)
-        if (fileExists) {
+        if fileExists {
             // File exists, it can be loaded directly.
             mainViewController?.loadFiles([url])
         }
@@ -81,9 +87,28 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             let localDocumentPath = tempDirectoryURL.appendingPathComponent(url.lastPathComponent)
 
             // Save document locally in the app's temporary directory.
-            document.save(to: localDocumentPath, for: UIDocumentSaveOperation.forOverwriting, completionHandler: { _ in
+            document.save(to: localDocumentPath, for: UIDocument.SaveOperation.forOverwriting, completionHandler: { _ in
                 mainViewController?.loadFiles([document.fileURL])
             })
         }
+    }
+
+    private func activeVTKViewController() -> VTKViewController? {
+        if let rootViewController = window?.rootViewController as? VTKViewController {
+            return rootViewController
+        }
+
+        if #available(iOS 13.0, *) {
+            for scene in UIApplication.shared.connectedScenes {
+                guard let windowScene = scene as? UIWindowScene else { continue }
+                for window in windowScene.windows {
+                    if let rootViewController = window.rootViewController as? VTKViewController {
+                        return rootViewController
+                    }
+                }
+            }
+        }
+
+        return nil
     }
 }

@@ -6,17 +6,15 @@
 //  Created by Alexis Girault on 4/3/17.
 //
 
-#import <GLKit/GLKit.h>
+#import <UIKit/UIKit.h>
 
-class vtkIOSRenderWindowInteractor;
-class vtkRenderWindow;
+@interface VTKView : UIView
 
-@interface VTKView : GLKView
-
-- (void)displayCoordinates:(int*)coordinates ofTouch:(CGPoint)touchPoint;
-- (void)normalizedCoordinates:(double*)coordinates ofTouch:(CGPoint)touch;
-
-@property (assign, readonly) vtkRenderWindow* renderWindow;
-@property (assign, readonly) vtkIOSRenderWindowInteractor* interactor;
+- (void)displayCoordinates:(int*)coordinates ofTouch:(CGPoint)touchPoint scale:(CGFloat)scale height:(CGFloat)height;
+- (void)normalizedCoordinates:(double*)coordinates
+                      ofTouch:(CGPoint)touch
+                        scale:(CGFloat)scale
+                        width:(CGFloat)width
+                       height:(CGFloat)height;
 
 @end

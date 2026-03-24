@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #import <UIKit/UIKit.h>
 
-@interface SettingsTableViewController
-  : UITableViewController<UIDocumentPickerDelegate, UIDocumentMenuDelegate>
+@interface SettingsTableViewController : UITableViewController<UIDocumentPickerDelegate>
 
 @end
